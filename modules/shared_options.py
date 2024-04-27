@@ -5,6 +5,8 @@ from modules import localization, ui_components, shared_items, shared, interroga
 from modules.paths_internal import models_path, script_path, data_path, sd_configs_path, sd_default_config, sd_model_file, default_sd_model_file, extensions_dir, extensions_builtin_dir, default_output_dir  # noqa: F401
 from modules.shared_cmd_options import cmd_opts
 from modules.options import options_section, OptionInfo, OptionHTML, categories
+from modules.dml import memory_providers, default_memory_provider
+from modules.onnx_impl.execution_providers import get_default_execution_provider, available_execution_providers
 
 options_templates = {}
 hide_dirs = shared.hide_dirs
@@ -83,6 +85,8 @@ options_templates.update(options_section(('saving-paths', "Paths for saving", "s
     "outdir_img2img_grids": OptionInfo(util.truncate_path(os.path.join(default_output_dir, 'img2img-grids')), 'Output directory for img2img grids', component_args=hide_dirs),
     "outdir_save": OptionInfo(util.truncate_path(os.path.join(data_path, 'log', 'images')), "Directory for saving images using the Save button", component_args=hide_dirs),
     "outdir_init_images": OptionInfo(util.truncate_path(os.path.join(default_output_dir, 'init-images')), "Directory for saving init images when using img2img", component_args=hide_dirs),
+    "onnx_cached_models_path": OptionInfo(os.path.join(models_path, 'ONNX', 'cache'), "Folder with ONNX cached models", component_args=hide_dirs),
+    "onnx_temp_dir": OptionInfo(os.path.join(models_path, 'ONNX', 'temp'), "Directory for ONNX conversion and Olive optimization process", component_args=hide_dirs),
 }))
 
 options_templates.update(options_section(('saving-to-dirs', "Saving to a directory", "saving"), {
@@ -204,6 +208,21 @@ options_templates.update(options_section(('img2img', "img2img", "sd"), {
     "overlay_inpaint": OptionInfo(True, "Overlay original for inpaint").info("when inpainting, overlay the original image over the areas that weren't inpainted."),
 }))
 
+options_templates.update(options_section(('onnx', "ONNX Runtime", "sd"), {
+    "onnx_enable": OptionInfo(False, 'Use ONNX Runtime instead of PyTorch implementation'),
+    "diffusers_pipeline": OptionInfo('ONNX Stable Diffusion', 'Diffusers pipeline', gr.Dropdown, lambda: {"choices": list(shared_items.get_pipelines())}),
+    "onnx_execution_provider": OptionInfo(get_default_execution_provider().value, 'Execution Provider', gr.Dropdown, lambda: {"choices": available_execution_providers }),
+    "onnx_cache_converted": OptionInfo(True, 'ONNX cache converted models'),
+
+    "olive_sep": OptionHTML("<h2>Olive</h2>"),
+    "olive_enable": OptionInfo(False, 'Enable Olive'),
+    "olive_submodels": OptionInfo([], 'Olive models to process', gr.CheckboxGroup, lambda: {"choices": ["Text Encoder", "Model", "VAE"]}),
+    "olive_float16": OptionInfo(True, 'Olive use FP16 on optimization'),
+    "olive_vae_encoder_float32": OptionInfo(False, 'Olive force FP32 for VAE Encoder'),
+    "olive_static_dims": OptionInfo(True, 'Olive use static dimensions'),
+    "olive_cache_optimized": OptionInfo(True, 'Olive cache optimized models'),
+}))
+
 options_templates.update(options_section(('optimizations', "Optimizations", "sd"), {
     "cross_attention_optimization": OptionInfo("Automatic", "Cross attention optimization", gr.Dropdown, lambda: {"choices": shared_items.cross_attention_optimizations()}),
     "s_min_uncond": OptionInfo(0.0, "Negative Guidance minimum sigma", gr.Slider, {"minimum": 0.0, "maximum": 15.0, "step": 0.01}).link("PR", "https://github.com/AUTOMATIC1111/stable-diffusion-webui/pull/9177").info("skip negative prompt for some steps when the image is almost ready; 0=disable, higher=faster"),
@@ -216,6 +235,7 @@ options_templates.update(options_section(('optimizations', "Optimizations", "sd"
     "batch_cond_uncond": OptionInfo(True, "Batch cond/uncond").info("do both conditional and unconditional denoising in one batch; uses a bit more VRAM during sampling, but improves speed; previously this was controlled by --always-batch-cond-uncond comandline argument"),
     "fp8_storage": OptionInfo("Disable", "FP8 weight", gr.Radio, {"choices": ["Disable", "Enable for SDXL", "Enable"]}).info("Use FP8 to store Linear/Conv layers' weight. Require pytorch>=2.1.0."),
     "cache_fp16_weight": OptionInfo(False, "Cache FP16 weight for LoRA").info("Cache fp16 weight when enabling FP8, will increase the quality of LoRA. Use more system ram."),
+    "directml_memory_provider": OptionInfo(default_memory_provider, "DirectML memory stats provider", gr.Dropdown, lambda: {"choices": memory_providers}),
 }))
 
 options_templates.update(options_section(('compatibility', "Compatibility", "sd"), {

@@ -26,7 +26,7 @@ import modules.hypernetworks.ui as hypernetworks_ui
 import modules.textual_inversion.ui as textual_inversion_ui
 import modules.textual_inversion.textual_inversion as textual_inversion
 import modules.shared as shared
-from modules import prompt_parser
+from modules import prompt_parser, dml
 from modules.sd_hijack import model_hijack
 from modules.infotext_utils import image_from_url_text, PasteField
 
@@ -227,6 +227,7 @@ def apply_setting(key, value):
     if oldval != value and opts.data_labels[key].onchange is not None:
         opts.data_labels[key].onchange()
 
+    dml.override_opts()
     opts.save(shared.config_filename)
     return getattr(opts, key)
 
@@ -1203,7 +1204,7 @@ def versions_html():
         xformers_version = "N/A"
 
     return f"""
-version: <a href="https://github.com/lllyasviel/stable-diffusion-webui-forge/commit/{commit}">{tag}</a>
+version: <a href="https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu-forge/commit/{commit}">{tag}</a>
 &#x2000;•&#x2000;
 python: <span title="{sys.version}">{python_version}</span>
 &#x2000;•&#x2000;

@@ -9,7 +9,7 @@ import psutil
 import re
 
 import launch
-from modules import paths_internal, timer, shared, extensions, errors
+from modules import paths_internal, timer, shared, extensions, errors, devices
 
 checksum_token = "DontStealMyGamePlz__WINNERS_DONT_USE_DRUGS__DONT_COPY_THAT_FLOPPY"
 environment_whitelist = {
@@ -71,6 +71,12 @@ def check(x):
 
 def get_dict():
     ram = psutil.virtual_memory()
+    gpu = None
+    try:
+        from modules.dml.device_properties import DeviceProperties
+        gpu = DeviceProperties(devices.device)
+    except Exception:
+        pass
 
     res = {
         "Platform": platform.platform(),
@@ -91,6 +97,10 @@ def get_dict():
         },
         "RAM": {
             x: pretty_bytes(getattr(ram, x, 0)) for x in ["total", "used", "free", "active", "inactive", "buffers", "cached", "shared"] if getattr(ram, x, 0) != 0
+        },
+        "GPU": "DirectML is not initialized" if gpu is None else {
+            "model": gpu.name,
+            "total_memory": gpu.total_memory,
         },
         "Extensions": get_extensions(enabled=True),
         "Inactive extensions": get_extensions(enabled=False),

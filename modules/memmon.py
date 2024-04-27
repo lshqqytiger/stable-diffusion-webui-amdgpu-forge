@@ -79,11 +79,18 @@ class MemUsageMonitor(threading.Thread):
             self.data["total"] = total
 
             torch_stats = torch.cuda.memory_stats(self.device)
-            self.data["active"] = torch_stats["active.all.current"]
-            self.data["active_peak"] = torch_stats["active_bytes.all.peak"]
-            self.data["reserved"] = torch_stats["reserved_bytes.all.current"]
-            self.data["reserved_peak"] = torch_stats["reserved_bytes.all.peak"]
-            self.data["system_peak"] = total - self.data["min_free"]
+            if "active.all.current" in torch_stats:
+                self.data["active"] = torch_stats["active.all.current"]
+                self.data["active_peak"] = torch_stats["active_bytes.all.peak"]
+                self.data["reserved"] = torch_stats["reserved_bytes.all.current"]
+                self.data["reserved_peak"] = torch_stats["reserved_bytes.all.peak"]
+                self.data["system_peak"] = total - self.data["min_free"]
+            else:
+                self.data["active"] = total - free
+                self.data["active_peak"] = total - free
+                self.data["reserved"] = total
+                self.data["reserved_peak"] = total
+                self.data["system_peak"] = total
 
         return self.data
 

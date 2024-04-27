@@ -10,6 +10,8 @@ class ExtraNetworksPageTextualInversion(ui_extra_networks.ExtraNetworksPage):
         self.allow_negative_prompt = True
 
     def refresh(self):
+        if shared.cmd_opts.directml:
+            return
         sd_hijack.model_hijack.embedding_db.load_textual_inversion_embeddings(force_reload=True)
 
     def create_item(self, name, index=None, enable_filter=True):

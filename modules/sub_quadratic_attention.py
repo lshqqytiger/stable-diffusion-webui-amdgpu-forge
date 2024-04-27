@@ -210,6 +210,5 @@ def efficient_dot_product_attention(
             value=value,
         )
 
-        res[:, i * query_chunk_size:i * query_chunk_size + attn_scores.shape[1], :] = attn_scores
-
+        res[0:res.shape[0], i * query_chunk_size:i * query_chunk_size + attn_scores.shape[1], 0:res.shape[2]] = attn_scores
     return res

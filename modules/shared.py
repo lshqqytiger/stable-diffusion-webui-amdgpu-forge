@@ -29,6 +29,7 @@ hypernetworks = {}
 loaded_hypernetworks = []
 
 state = None
+compiled_model_state = None
 
 prompt_styles = None
 

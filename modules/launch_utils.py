@@ -9,6 +9,7 @@ import importlib.util
 import importlib.metadata
 import platform
 import json
+import glob
 from functools import lru_cache
 from typing import NamedTuple
 from pathlib import Path
@@ -219,7 +220,7 @@ def git_pull_recursive(dir):
 def version_check(commit):
     try:
         import requests
-        commits = requests.get('https://api.github.com/repos/AUTOMATIC1111/stable-diffusion-webui/branches/master').json()
+        commits = requests.get('https://api.github.com/repos/lshqqytiger/stable-diffusion-webui-amdgpu-forge/branches/main').json()
         if commit != "<none>" and commits['commit']['sha'] != commit:
             print("--------------------------------------------------------")
             print("| You are not up to date with the most recent release. |")
@@ -360,10 +361,63 @@ def requirements_met(requirements_file):
 
 
 def prepare_environment():
-    torch_index_url = os.environ.get('TORCH_INDEX_URL', "https://download.pytorch.org/whl/cu121")
-    torch_command = os.environ.get('TORCH_COMMAND', f"pip install torch==2.1.2 torchvision==0.16.2 --extra-index-url {torch_index_url}")
-    if args.use_ipex:
-        if platform.system() == "Windows":
+    system = platform.system()
+    nvidia_driver_found = False
+    rocm_found = False
+    hip_found = False
+    backend = "cuda"
+    torch_command = "pip install torch==2.2.2 torchvision" if args.use_cpu_torch else "pip install torch==2.2.2 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+
+    if args.use_cpu_torch:
+        backend = "cpu"
+        torch_command = os.environ.get(
+            "TORCH_COMMAND",
+            "pip install torch==2.2.2 torchvision",
+        )
+    elif args.directml:
+        backend = "directml"
+        torch_command = os.environ.get(
+            "TORCH_COMMAND",
+            "pip install torch==2.0.0 torchvision==0.15.1 torch-directml",
+        )
+        args.skip_python_version_check = True
+    elif args.zluda:
+        print('WARNING: ZLUDA works best with SD.Next. Please consider migrating to SD.Next.')
+        backend = "cuda"
+        torch_index_url = os.environ.get(
+            "TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu118"
+        )
+        torch_command = os.environ.get(
+            "TORCH_COMMAND",
+            f"pip install torch==2.2.2 torchvision --index-url {torch_index_url}",
+        )
+        zluda_path = find_zluda()
+        if zluda_path is None:
+            is_windows = system == "Windows"
+            import urllib.request
+            import zipfile
+            import tarfile
+            archive_type = zipfile.ZipFile if is_windows else tarfile.TarFile
+            try:
+                urllib.request.urlretrieve(f'https://github.com/lshqqytiger/ZLUDA/releases/download/rel.9e97c717c3fef536d3116f39a15d95626c1dfe39/ZLUDA-{platform.system().lower()}-amd64.{"zip" if is_windows else "tar.gz"}', '_zluda')
+                with archive_type('_zluda', 'r') as f:
+                    f.extractall('.zluda')
+                zluda_path = os.path.abspath('./.zluda')
+                os.remove('_zluda')
+            except Exception as e:
+                print(f'Failed to install ZLUDA: {e}')
+        if os.path.exists(os.path.join(zluda_path, 'nvcuda.dll')):
+            print(f'Using ZLUDA in {zluda_path}')
+            torch_command = os.environ.get(
+                'TORCH_COMMAND',
+                'pip install torch==2.2.2 torchvision --index-url https://download.pytorch.org/whl/cu118',
+            )
+            paths = os.environ.get('PATH', '.')
+            if zluda_path not in paths:
+                os.environ['PATH'] = paths + ';' + zluda_path
+    elif args.use_ipex:
+        backend = "ipex"
+        if system == "Windows":
             # The "Nuullll/intel-extension-for-pytorch" wheels were built from IPEX source for Intel Arc GPU: https://github.com/intel/intel-extension-for-pytorch/tree/xpu-main
             # This is NOT an Intel official release so please use it at your own risk!!
             # See https://github.com/Nuullll/intel-extension-for-pytorch/releases/tag/v2.0.110%2Bxpu-master%2Bdll-bundle for details.
@@ -382,6 +436,41 @@ def prepare_environment():
             # See https://intel.github.io/intel-extension-for-pytorch/index.html#installation for details.
             torch_index_url = os.environ.get('TORCH_INDEX_URL', "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/")
             torch_command = os.environ.get('TORCH_COMMAND', f"pip install torch==2.0.0a0 intel-extension-for-pytorch==2.0.110+gitba7f6c1 --extra-index-url {torch_index_url}")
+    else:
+        nvidia_driver_found = shutil.which("nvidia-smi") is not None
+        rocm_found = shutil.which("rocminfo") is not None
+        hip_found = shutil.which("hipinfo") is not None
+        if nvidia_driver_found:
+            print("NVIDIA driver was found.")
+            backend = "cuda"
+            torch_index_url = os.environ.get(
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu121"
+            )
+            torch_command = os.environ.get(
+                "TORCH_COMMAND",
+                f"pip install torch==2.2.0 torchvision==0.17.0 --extra-index-url {torch_index_url}",
+            )
+        elif system == "Windows" and hip_found: # ZLUDA
+            print("ROCm Toolkit was found.")
+            backend = "cuda"
+            torch_index_url = os.environ.get(
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu118"
+            )
+            torch_command = os.environ.get(
+                "TORCH_COMMAND",
+                f"pip install torch==2.2.1 torchvision --index-url {torch_index_url}",
+            )
+        elif rocm_found:
+            print("ROCm Toolkit was found.")
+            backend = "rocm"
+            torch_index_url = os.environ.get(
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm5.4.2"
+            )
+            torch_command = os.environ.get(
+                "TORCH_COMMAND",
+                f"pip install torch==2.0.1 torchvision==0.15.2 --index-url {torch_index_url}",
+            )
+
     requirements_file = os.environ.get('REQS_FILE', "requirements_versions.txt")
     requirements_file_for_npu = os.environ.get('REQS_FILE_FOR_NPU', "requirements_npu.txt")
 
@@ -424,8 +513,10 @@ def prepare_environment():
     if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
+        if args.zluda:
+            patch_zluda()
 
-    if args.use_ipex:
+    if args.use_ipex or args.directml or args.use_cpu_torch:
         args.skip_torch_cuda_test = True
     if not args.skip_torch_cuda_test and not check_run_python("import torch; assert torch.cuda.is_available()"):
         raise RuntimeError(
@@ -474,6 +565,29 @@ def prepare_environment():
         run_pip(f"install -r \"{requirements_file_for_npu}\"", "requirements_for_npu")
         startup_timer.record("install requirements_for_npu")
 
+    if args.skip_ort:
+        print("Skipping onnxruntime installation.")
+    else:
+        if args.directml:
+            if not is_installed("onnxruntime-directml"):
+                run_pip("install onnxruntime-directml", "onnxruntime-directml")
+        else:
+            if nvidia_driver_found:
+                if not is_installed("onnxruntime-gpu"):
+                    run_pip("install onnxruntime-gpu", "onnxruntime-gpu")
+            elif rocm_found:
+                if not is_installed("onnxruntime-training"):
+                    command = subprocess.run(next(iter(glob.glob("/opt/rocm*/bin/hipconfig")), "hipconfig") + ' --version', shell=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    rocm_ver = command.stdout.decode(encoding="utf8", errors="ignore").split('.')
+                    ort_version = os.environ.get('ONNXRUNTIME_VERSION', None)
+                    run_pip(f"install --pre onnxruntime-training{'' if ort_version is None else ('==' + ort_version)} --index-url https://pypi.lsh.sh/{rocm_ver[0]}{rocm_ver[1]} --extra-index-url https://pypi.org/simple", "onnxruntime-training")
+            else:
+                if not is_installed("onnxruntime"):
+                    run_pip("install onnxruntime", "onnxruntime")
+
+        from modules.onnx_impl import initialize_olive
+        initialize_olive()
+
     if not args.skip_install:
         run_extensions_installers(settings_file=args.ui_settings_file)
 
@@ -489,6 +603,8 @@ def prepare_environment():
         print("Exiting because of --exit argument")
         exit(0)
 
+    from modules import devices
+    devices.backend = backend
 
 
 def configure_for_tests():
@@ -561,3 +677,36 @@ def dump_sysinfo():
         file.write(text)
 
     return filename
+
+
+def find_zluda():
+    zluda_path = os.environ.get('ZLUDA', None)
+    if zluda_path is None:
+        paths = os.environ.get('PATH', '').split(';')
+        for path in paths:
+            if os.path.exists(os.path.join(path, 'zluda_redirect.dll')):
+                zluda_path = path
+                break
+    return zluda_path
+
+
+def patch_zluda():
+    zluda_path = find_zluda()
+    if zluda_path is None:
+        print('Failed to automatically patch torch with ZLUDA. Could not find ZLUDA from PATH.')
+        return
+    python_dir = os.path.dirname(shutil.which('python'))
+    if shutil.which('conda') is None:
+        python_dir = os.path.dirname(python_dir)
+    venv_dir = os.environ.get('VENV_DIR', python_dir)
+    dlls_to_patch = {
+        'cublas.dll': 'cublas64_11.dll',
+        #'cudnn.dll': 'cudnn64_8.dll',
+        'cusparse.dll': 'cusparse64_11.dll',
+        'nvrtc.dll': 'nvrtc64_112_0.dll',
+    }
+    try:
+        for k, v in dlls_to_patch.items():
+            shutil.copyfile(os.path.join(zluda_path, k), os.path.join(venv_dir, 'Lib', 'site-packages', 'torch', 'lib', v))
+    except Exception as e:
+        print(f'ZLUDA: failed to automatically patch torch: {e}')

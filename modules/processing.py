@@ -21,6 +21,7 @@ from modules.rng import slerp # noqa: F401
 from modules.sd_hijack import model_hijack
 from modules.sd_samplers_common import images_tensor_to_samples, decode_first_stage, approximation_indexes
 from modules.shared import opts, cmd_opts, state
+from modules.onnx_impl import check_parameters_changed, preprocess_pipeline
 import modules.shared as shared
 import modules.paths as paths
 import modules.face_restoration
@@ -734,20 +735,21 @@ def process_images(p: StableDiffusionProcessing) -> Processed:
     stored_opts = {k: opts.data[k] if k in opts.data else opts.get_default(k) for k in p.override_settings.keys() if k in opts.data}
 
     try:
-        # if no checkpoint override or the override checkpoint can't be found, remove override entry and load opts checkpoint
-        # and if after running refiner, the refiner model is not unloaded - webui swaps back to main model here, if model over is present it will be reloaded afterwards
-        if sd_models.checkpoint_aliases.get(p.override_settings.get('sd_model_checkpoint')) is None:
-            p.override_settings.pop('sd_model_checkpoint', None)
-            sd_models.reload_model_weights()
-
-        for k, v in p.override_settings.items():
-            opts.set(k, v, is_api=True, run_callbacks=False)
-
-            if k == 'sd_model_checkpoint':
+        if not opts.onnx_enable:
+            # if no checkpoint override or the override checkpoint can't be found, remove override entry and load opts checkpoint
+            # and if after running refiner, the refiner model is not unloaded - webui swaps back to main model here, if model over is present it will be reloaded afterwards
+            if sd_models.checkpoint_aliases.get(p.override_settings.get('sd_model_checkpoint')) is None:
+                p.override_settings.pop('sd_model_checkpoint', None)
                 sd_models.reload_model_weights()
 
-            if k == 'sd_vae':
-                sd_vae.reload_vae_weights()
+            for k, v in p.override_settings.items():
+                opts.set(k, v, is_api=True, run_callbacks=False)
+
+                if k == 'sd_model_checkpoint':
+                    sd_models.reload_model_weights()
+
+                if k == 'sd_vae':
+                    sd_vae.reload_vae_weights()
 
         res = process_images_inner(p)
 
@@ -806,6 +808,98 @@ def process_images_inner(p: StableDiffusionProcessing) -> Processed:
         p.all_subseeds = subseed
     else:
         p.all_subseeds = [int(subseed) + x for x in range(len(p.all_prompts))]
+
+    if opts.onnx_enable:
+        shared.sd_model = check_parameters_changed(p, False)
+        if shared.sd_model.__class__.__name__ == "OnnxRawPipeline":
+            shared.sd_model = preprocess_pipeline(p)
+
+        pipeline_type = shared.sd_model.__class__.__name__
+        print(f'ONNX: processing={p.__class__.__name__}, pipeline={pipeline_type}')
+
+        output_images = []
+
+        for n in range(p.n_iter):
+            p.iteration = n
+
+            if state.skipped:
+                state.skipped = False
+
+            if state.interrupted:
+                break
+
+            p.prompts = p.all_prompts[n * p.batch_size:(n + 1) * p.batch_size]
+            p.negative_prompts = p.all_negative_prompts[n * p.batch_size:(n + 1) * p.batch_size]
+            p.seeds = p.all_seeds[n * p.batch_size:(n + 1) * p.batch_size]
+            p.subseeds = p.all_subseeds[n * p.batch_size:(n + 1) * p.batch_size]
+
+            generator = torch.Generator(devices.device)
+            generator.manual_seed(p.seed + n)
+
+            kwargs = {
+                "prompt": p.prompts,
+                "negative_prompt": p.negative_prompts,
+                "num_inference_steps": p.steps,
+                "num_images_per_prompt": 1,
+                "height": p.height,
+                "width": p.width,
+                "generator": generator,
+                "output_type": "pil",
+            }
+            if "Img2Img" in pipeline_type:
+                kwargs["image"] = p.init_images[n]
+                kwargs["strength"] = p.denoising_strength
+                del kwargs["height"], kwargs["width"]
+
+            if p.eta is not None:
+                kwargs["eta"] = p.eta
+
+            result = shared.sd_model(**kwargs)
+            for image in result.images:
+                images.save_image(image, p.outpath_samples, "")
+            output_images += result.images
+
+            result.images = None
+            result = None
+            devices.torch_gc()
+
+        index_of_first_image = 0
+        unwanted_grid_because_of_img_count = (
+            len(output_images) < 2 and shared.opts.grid_only_if_multiple
+        )
+        if (
+            shared.opts.return_grid or shared.opts.grid_save
+        ) and not unwanted_grid_because_of_img_count:
+            grid = images.image_grid(output_images, p.n_iter)
+
+            if shared.opts.return_grid:
+                output_images.insert(0, grid)
+                index_of_first_image = 1
+
+            if shared.opts.grid_save:
+                images.save_image(
+                    grid,
+                    p.outpath_grids,
+                    "grid",
+                    p.all_seeds[0],
+                    p.all_prompts[0],
+                    shared.opts.grid_format,
+                    short_filename=not shared.opts.grid_extended_filename,
+                    grid=True,
+                )
+
+        devices.torch_gc()
+
+        return Processed(
+            p,
+            images_list=output_images,
+            seed=p.all_seeds[0],
+            info="",
+            comments="",
+            subseed=p.all_subseeds[0],
+            index_of_first_image=index_of_first_image,
+            infotexts=[],
+        )
 
     if os.path.exists(cmd_opts.embeddings_dir) and not p.do_not_reload_embeddings:
         model_hijack.embedding_db.load_textual_inversion_embeddings()

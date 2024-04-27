@@ -14,7 +14,7 @@ import gc
 
 from ldm.util import instantiate_from_config
 
-from modules import paths, shared, modelloader, devices, script_callbacks, sd_vae, sd_disable_initialization, errors, hashes, sd_models_config, sd_unet, sd_models_xl, cache, extra_networks, processing, lowvram, sd_hijack, patches
+from modules import paths, shared, shared_items, modelloader, devices, script_callbacks, sd_vae, sd_disable_initialization, errors, hashes, sd_models_config, sd_unet, sd_models_xl, cache, extra_networks, processing, lowvram, sd_hijack, patches
 from modules.timer import Timer
 import numpy as np
 from modules_forge import forge_loader
@@ -85,9 +85,9 @@ class CheckpointInfo:
         self.name = name
         self.name_for_extra = os.path.splitext(os.path.basename(filename))[0]
         self.model_name = os.path.splitext(name.replace("/", "_").replace("\\", "_"))[0]
-        self.hash = model_hash(filename)
+        self.hash = model_hash(filename) if os.path.isfile(filename) else None
 
-        self.sha256 = hashes.sha256_from_cache(self.filename, f"checkpoint/{name}")
+        self.sha256 = hashes.sha256_from_cache(self.filename, f"checkpoint/{name}") if os.path.isfile(filename) else None
         self.shorthash = self.sha256[0:10] if self.sha256 else None
 
         self.title = name if self.shorthash is None else f'{name} [{self.shorthash}]'
@@ -565,11 +565,24 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None):
         if model_data.sd_model.filename == checkpoint_info.filename:
             return model_data.sd_model
 
+        if not shared.opts.onnx_enable:
+            sd_hijack.model_hijack.undo_hijack(model_data.sd_model)
+        send_model_to_trash(model_data.sd_model)
         model_data.sd_model = None
         model_data.loaded_sd_models = []
         model_management.unload_all_models()
         model_management.soft_empty_cache()
         gc.collect()
+
+    if shared.opts.onnx_enable:
+        pipeline = shared_items.get_pipelines().get(shared.opts.diffusers_pipeline, None)
+        if os.path.isdir(checkpoint_info.filename):
+            model_data.sd_model = pipeline.from_pretrained(checkpoint_info.filename)
+        else:
+            model_data.sd_model = pipeline.from_single_file(checkpoint_info.filename)
+        model_data.sd_model.sd_checkpoint_info = checkpoint_info
+        model_data.sd_model.sd_model_hash = checkpoint_info.hash
+        return model_data.sd_model
 
     timer.record("unload existing model")
 

@@ -1,7 +1,7 @@
 import torch
 import inspect
 import k_diffusion.sampling
-from modules import sd_samplers_common, sd_samplers_extra, sd_samplers_cfg_denoiser
+from modules import devices, sd_samplers_common, sd_samplers_extra, sd_samplers_cfg_denoiser
 from modules.sd_samplers_cfg_denoiser import CFGDenoiser  # noqa: F401
 from modules.script_callbacks import ExtraNoiseParams, extra_noise_callback
 
@@ -185,6 +185,8 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
             extra_params_kwargs['solver_type'] = 'heun'
 
         self.model_wrap_cfg.init_latent = x
+        if shared.cmd_opts.directml:
+            self.model_wrap_cfg.init_latent = self.model_wrap_cfg.init_latent.float()
         self.last_latent = x
         self.sampler_extra_args = {
             'cond': conditioning,
@@ -200,7 +202,7 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
 
         sampling_cleanup(unet_patcher)
 
-        return samples
+        return samples.type(devices.dtype)
 
     def sample(self, p, x, conditioning, unconditional_conditioning, steps=None, image_conditioning=None):
         unet_patcher = self.model_wrap.inner_model.forge_objects.unet
