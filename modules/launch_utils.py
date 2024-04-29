@@ -366,13 +366,13 @@ def prepare_environment():
     rocm_found = False
     hip_found = False
     backend = "cuda"
-    torch_command = "pip install torch==2.2.2 torchvision" if args.use_cpu_torch else "pip install torch==2.2.2 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+    torch_command = "pip install torch==2.3.0 torchvision" if args.use_cpu_torch else "pip install torch==2.3.0 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
 
     if args.use_cpu_torch:
         backend = "cpu"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.2.2 torchvision",
+            "pip install torch==2.3.0 torchvision",
         )
     elif args.directml:
         backend = "directml"
@@ -389,32 +389,23 @@ def prepare_environment():
         )
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            f"pip install torch==2.2.2 torchvision --index-url {torch_index_url}",
+            f"pip install torch==2.3.0 torchvision --index-url {torch_index_url}",
         )
-        zluda_path = find_zluda()
-        if zluda_path is None:
-            is_windows = system == "Windows"
-            import urllib.request
-            import zipfile
-            import tarfile
-            archive_type = zipfile.ZipFile if is_windows else tarfile.TarFile
-            try:
-                urllib.request.urlretrieve(f'https://github.com/lshqqytiger/ZLUDA/releases/download/rel.9e97c717c3fef536d3116f39a15d95626c1dfe39/ZLUDA-{platform.system().lower()}-amd64.{"zip" if is_windows else "tar.gz"}', '_zluda')
-                with archive_type('_zluda', 'r') as f:
-                    f.extractall('.zluda')
-                zluda_path = os.path.abspath('./.zluda')
-                os.remove('_zluda')
-            except Exception as e:
-                print(f'Failed to install ZLUDA: {e}')
-        if os.path.exists(os.path.join(zluda_path, 'nvcuda.dll')):
-            print(f'Using ZLUDA in {zluda_path}')
-            torch_command = os.environ.get(
-                'TORCH_COMMAND',
-                'pip install torch==2.2.2 torchvision --index-url https://download.pytorch.org/whl/cu118',
-            )
-            paths = os.environ.get('PATH', '.')
-            if zluda_path not in paths:
-                os.environ['PATH'] = paths + ';' + zluda_path
+        try:
+            from modules import zluda_installer
+            if args.use_zluda_dnn:
+                if zluda_installer.check_dnn_dependency():
+                    zluda_installer.enable_dnn()
+                else:
+                    print("Couldn't find the required dependency of ZLUDA DNN.")
+            zluda_installer.install()
+            zluda_installer.resolve_path()
+            torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.3.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
+            print(f'Using ZLUDA in {zluda_installer.ZLUDA_PATH}')
+        except Exception as e:
+            print(f'Failed to install ZLUDA: {e}')
+            print('Using CPU-only torch')
+            torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
     elif args.use_ipex:
         backend = "ipex"
         if system == "Windows":
@@ -448,7 +439,7 @@ def prepare_environment():
             )
             torch_command = os.environ.get(
                 "TORCH_COMMAND",
-                f"pip install torch==2.2.0 torchvision==0.17.0 --extra-index-url {torch_index_url}",
+                f"pip install torch==2.3.0 torchvision --extra-index-url {torch_index_url}",
             )
         elif system == "Windows" and hip_found: # ZLUDA
             print("ROCm Toolkit was found.")
@@ -458,17 +449,17 @@ def prepare_environment():
             )
             torch_command = os.environ.get(
                 "TORCH_COMMAND",
-                f"pip install torch==2.2.1 torchvision --index-url {torch_index_url}",
+                f"pip install torch==2.3.0 torchvision --index-url {torch_index_url}",
             )
         elif rocm_found:
             print("ROCm Toolkit was found.")
             backend = "rocm"
             torch_index_url = os.environ.get(
-                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm5.4.2"
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.0"
             )
             torch_command = os.environ.get(
                 "TORCH_COMMAND",
-                f"pip install torch==2.0.1 torchvision==0.15.2 --index-url {torch_index_url}",
+                f"pip install torch==2.3.0 torchvision --index-url {torch_index_url}",
             )
 
     requirements_file = os.environ.get('REQS_FILE', "requirements_versions.txt")
@@ -514,7 +505,11 @@ def prepare_environment():
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
         if args.zluda:
-            patch_zluda()
+            try:
+                from modules.zluda_installer import patch as patch_torch
+                patch_torch()
+            except Exception as e:
+                print(f'ZLUDA: failed to automatically patch torch: {e}')
 
     if args.use_ipex or args.directml or args.use_cpu_torch:
         args.skip_torch_cuda_test = True
