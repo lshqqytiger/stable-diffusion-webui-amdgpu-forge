@@ -391,19 +391,29 @@ def prepare_environment():
             "TORCH_COMMAND",
             f"pip install torch==2.3.0 torchvision --index-url {torch_index_url}",
         )
+        error = None
+        from modules import zluda_installer
         try:
-            from modules import zluda_installer
             if args.use_zluda_dnn:
                 if zluda_installer.check_dnn_dependency():
                     zluda_installer.enable_dnn()
                 else:
                     print("Couldn't find the required dependency of ZLUDA DNN.")
             zluda_installer.install()
-            zluda_installer.resolve_path()
-            torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.3.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
-            print(f'Using ZLUDA in {zluda_installer.ZLUDA_PATH}')
+            zluda_path = zluda_installer.find()
+            zluda_installer.make_copy(zluda_path)
         except Exception as e:
+            error = e
             print(f'Failed to install ZLUDA: {e}')
+        if error is None:
+            try:
+                zluda_installer.load(zluda_path)
+                torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.3.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
+                print(f'Using ZLUDA in {zluda_path}')
+            except Exception as e:
+                error = e
+                print(f'Failed to load ZLUDA: {e}')
+        if error is not None:
             print('Using CPU-only torch')
             torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
     elif args.use_ipex:
@@ -504,12 +514,6 @@ def prepare_environment():
     if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
-        if args.zluda:
-            try:
-                from modules.zluda_installer import patch as patch_torch
-                patch_torch()
-            except Exception as e:
-                print(f'ZLUDA: failed to automatically patch torch: {e}')
 
     if args.use_ipex or args.directml or args.use_cpu_torch:
         args.skip_torch_cuda_test = True
