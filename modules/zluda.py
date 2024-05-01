@@ -4,14 +4,6 @@ from torch._prims_common import DeviceLikeType
 from modules import shared, devices
 
 
-conv2d = torch.nn.functional.conv2d
-def conv2d_cudnn_disabled(*args, **kwargs):
-    torch.backends.cudnn.enabled = False
-    R = conv2d(*args, **kwargs)
-    torch.backends.cudnn.enabled = True
-    return R
-
-
 def is_zluda(device: DeviceLikeType):
     device = torch.device(device)
     return torch.cuda.get_device_name(device).endswith("[ZLUDA]")
@@ -31,12 +23,10 @@ def test(device: DeviceLikeType):
 def initialize_zluda():
     device = devices.get_optimal_device()
     if platform.system() == "Windows" and torch.cuda.is_available() and is_zluda(device):
-        torch.backends.cudnn.enabled = shared.cmd_opts.use_zluda_dnn
+        torch.backends.cudnn.enabled = False
         torch.backends.cuda.enable_flash_sdp(False)
         torch.backends.cuda.enable_math_sdp(True)
         torch.backends.cuda.enable_mem_efficient_sdp(False)
-        if shared.cmd_opts.use_zluda_dnn:
-            torch.nn.functional.conv2d = conv2d_cudnn_disabled
         devices.device_codeformer = devices.cpu
 
         if not test(device):

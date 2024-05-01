@@ -394,11 +394,6 @@ def prepare_environment():
         error = None
         from modules import zluda_installer
         try:
-            if args.use_zluda_dnn:
-                if zluda_installer.check_dnn_dependency():
-                    zluda_installer.enable_dnn()
-                else:
-                    print("Couldn't find the required dependency of ZLUDA DNN.")
             zluda_installer.install()
             zluda_path = zluda_installer.find()
             zluda_installer.make_copy(zluda_path)
