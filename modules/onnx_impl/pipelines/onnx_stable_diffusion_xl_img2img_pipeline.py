@@ -29,6 +29,7 @@ class OnnxStableDiffusionXLImg2ImgPipeline(CallablePipelineBase, optimum.onnxrun
     ):
         optimum.onnxruntime.ORTStableDiffusionXLImg2ImgPipeline.__init__(self, vae_decoder, text_encoder, unet, config, tokenizer, scheduler, feature_extractor, vae_encoder, text_encoder_2, tokenizer_2, use_io_binding, model_save_dir, add_watermarker)
         super().__init__()
+        del self.image_processor # This image processor requires np array. In order to share same workflow with non-XL pipelines, delete it.
 
     def prepare_latents(self, image, timestep, batch_size, num_images_per_prompt, dtype, generator=None):
         batch_size = batch_size * num_images_per_prompt

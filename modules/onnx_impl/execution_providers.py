@@ -2,6 +2,7 @@ import sys
 from enum import Enum
 from typing import Tuple, List
 import onnxruntime as ort
+from modules import devices
 
 
 class ExecutionProvider(str, Enum):
@@ -20,7 +21,6 @@ EP_TO_NAME = {
     ExecutionProvider.CUDA: "gpu-cuda", # test required
     ExecutionProvider.ROCm: "gpu-rocm", # test required
     ExecutionProvider.MIGraphX: "gpu-migraphx", # test required
-    ExecutionProvider.OpenVINO: "gpu-openvino??", # test required
 }
 TORCH_DEVICE_TO_EP = {
     "cpu": ExecutionProvider.CPU,
@@ -31,8 +31,6 @@ TORCH_DEVICE_TO_EP = {
 
 
 def get_default_execution_provider() -> ExecutionProvider:
-    from modules import devices
-
     if devices.backend == "cpu":
         return ExecutionProvider.CPU
     elif devices.backend == "directml":
@@ -40,10 +38,7 @@ def get_default_execution_provider() -> ExecutionProvider:
     elif devices.backend == "cuda":
         return ExecutionProvider.CUDA
     elif devices.backend == "rocm":
-        if ExecutionProvider.ROCm in available_execution_providers:
-            return ExecutionProvider.ROCm
-        else:
-            return ExecutionProvider.CPU
+        return ExecutionProvider.ROCm
     elif devices.backend == "ipex" or devices.backend == "openvino":
         return ExecutionProvider.OpenVINO
     return ExecutionProvider.CPU
@@ -51,30 +46,21 @@ def get_default_execution_provider() -> ExecutionProvider:
 
 def get_execution_provider_options():
     from modules.shared import cmd_opts, opts
-
-    execution_provider_options = {
-        "device_id": int(cmd_opts.device_id or 0),
-    }
-
+    execution_provider_options = { "device_id": int(cmd_opts.device_id or 0) }
     if opts.onnx_execution_provider == ExecutionProvider.ROCm:
         if ExecutionProvider.ROCm in available_execution_providers:
             execution_provider_options["tunable_op_enable"] = 1
             execution_provider_options["tunable_op_tuning_enable"] = 1
-    elif opts.onnx_execution_provider == ExecutionProvider.OpenVINO:
-        execution_provider_options["device_type"] = "GPU.0"
-        del execution_provider_options["device_id"]
-
     return execution_provider_options
 
 
 def get_provider() -> Tuple:
     from modules.shared import opts
-
     return (opts.onnx_execution_provider, get_execution_provider_options(),)
 
 
 def install_execution_provider(ep: ExecutionProvider):
-    from modules.launch_utils import is_installed, run_pip, run_pip_uninstall, get_onnxruntime_source_for_rocm
+    from modules.launch_utils import is_installed, run_pip, run_pip_uninstall
 
     if is_installed("onnxruntime"):
         run_pip_uninstall("onnxruntime")
@@ -98,7 +84,7 @@ def install_execution_provider(ep: ExecutionProvider):
             print("ROCMExecutionProvider is not supported on Windows.")
             return
 
-        packages.append(get_onnxruntime_source_for_rocm(None))
+        packages.append("--pre onnxruntime-training --index-url https://pypi.lsh.sh/60 --extra-index-url https://pypi.org/simple")
     elif ep == ExecutionProvider.OpenVINO:
         if is_installed("openvino"):
             run_pip_uninstall("openvino")

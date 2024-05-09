@@ -1,4 +1,3 @@
-import os
 from typing import Any, Dict, Callable, Optional
 import numpy as np
 import torch
@@ -11,7 +10,6 @@ from fastapi import encoders as fastapi_encoders
 
 
 initialized = False
-run_olive_workflow = None
 
 
 class DynamicSessionOptions(ort.SessionOptions):
@@ -19,7 +17,6 @@ class DynamicSessionOptions(ort.SessionOptions):
 
     def __init__(self):
         super().__init__()
-
         self.enable_mem_pattern = False
 
     @classmethod
@@ -54,6 +51,9 @@ class TorchCompatibleModule:
     device = torch.device("cpu")
     dtype = torch.float32
 
+    def named_modules(self): # dummy
+        return ()
+
     def to(self, *_, **__):
         raise NotImplementedError
 
@@ -80,7 +80,6 @@ class TemporalModule(TorchCompatibleModule):
         device = extract_device(args, kwargs)
         if device is not None and device.type != "cpu":
             from .execution_providers import TORCH_DEVICE_TO_EP
-
             provider = TORCH_DEVICE_TO_EP[device.type] if device.type in TORCH_DEVICE_TO_EP else self.provider
             return OnnxRuntimeModel.load_model(self.path, provider, DynamicSessionOptions.from_sess_options(self.sess_options))
         return self
@@ -88,9 +87,6 @@ class TemporalModule(TorchCompatibleModule):
 
 class OnnxRuntimeModel(TorchCompatibleModule, diffusers.OnnxRuntimeModel):
     config = {} # dummy
-
-    def named_modules(self): # dummy
-        return ()
 
     def to(self, *args, **kwargs):
         from modules.onnx_impl.utils import extract_device, move_inference_session
@@ -103,17 +99,17 @@ class OnnxRuntimeModel(TorchCompatibleModule, diffusers.OnnxRuntimeModel):
 
 
 class VAEConfig:
-    DEFAULTS = {
-        "scaling_factor": 0.18215,
-    }
-
+    DEFAULTS = { "scaling_factor": 0.18215 }
     config: Dict
 
     def __init__(self, config: Dict):
         self.config = config
 
     def __getattr__(self, key):
-        return self.config.get(key, VAEConfig.DEFAULTS[key])
+        return self.config.get(key, VAEConfig.DEFAULTS.get(key, None))
+
+    def get(self, key, default):
+        return self.config.get(key, VAEConfig.DEFAULTS.get(key, default))
 
 
 class VAE(TorchCompatibleModule):
@@ -154,10 +150,8 @@ class VAE(TorchCompatibleModule):
 
 def check_parameters_changed(p, refiner_enabled: bool):
     from modules import shared, sd_models
-
     if shared.sd_model.__class__.__name__ == "OnnxRawPipeline" or not shared.sd_model.__class__.__name__.startswith("Onnx"):
         return shared.sd_model
-
     compile_height = p.height
     compile_width = p.width
     if (shared.compiled_model_state is None or
@@ -175,17 +169,14 @@ def check_parameters_changed(p, refiner_enabled: bool):
     shared.compiled_model_state.height = compile_height
     shared.compiled_model_state.width = compile_width
     shared.compiled_model_state.batch_size = p.batch_size
-
     return shared.sd_model
 
 
 def preprocess_pipeline(p):
     from modules import shared, sd_models
-
     if "ONNX" not in shared.opts.diffusers_pipeline:
         shared.log.warning(f"Unsupported pipeline for 'olive-ai' compile backend: {shared.opts.diffusers_pipeline}. You should select one of the ONNX pipelines.")
         return shared.sd_model
-
     if hasattr(shared.sd_model, "preprocess"):
         shared.sd_model = shared.sd_model.preprocess(p)
     if hasattr(shared.sd_refiner, "preprocess"):
@@ -195,7 +186,6 @@ def preprocess_pipeline(p):
         if shared.opts.onnx_unload_base:
             sd_models.reload_model_weights()
             shared.sd_model = shared.sd_model.preprocess(p)
-
     return shared.sd_model
 
 
@@ -211,82 +201,51 @@ def jsonable_encoder(obj: Any, *args, **kwargs):
     return fastapi_jsonable_encoder(obj, *args, **kwargs)
 
 
-def initialize():
+def initialize_onnx():
     global initialized # pylint: disable=global-statement
-
     if initialized:
         return
-
     from modules import devices
-    from modules.paths import models_path
     from modules.shared import opts
-    from .execution_providers import ExecutionProvider, TORCH_DEVICE_TO_EP, available_execution_providers
+    try: # may fail on onnx import
+        from .execution_providers import ExecutionProvider, TORCH_DEVICE_TO_EP, available_execution_providers
+        if devices.backend == "rocm":
+            TORCH_DEVICE_TO_EP["cuda"] = ExecutionProvider.ROCm
+        from .pipelines.onnx_stable_diffusion_pipeline import OnnxStableDiffusionPipeline
+        from .pipelines.onnx_stable_diffusion_img2img_pipeline import OnnxStableDiffusionImg2ImgPipeline
+        from .pipelines.onnx_stable_diffusion_inpaint_pipeline import OnnxStableDiffusionInpaintPipeline
+        from .pipelines.onnx_stable_diffusion_upscale_pipeline import OnnxStableDiffusionUpscalePipeline
+        from .pipelines.onnx_stable_diffusion_xl_pipeline import OnnxStableDiffusionXLPipeline
+        from .pipelines.onnx_stable_diffusion_xl_img2img_pipeline import OnnxStableDiffusionXLImg2ImgPipeline
 
-    onnx_dir = os.path.join(models_path, "ONNX")
-    if not os.path.isdir(onnx_dir):
-        os.mkdir(onnx_dir)
+        OnnxRuntimeModel.__module__ = 'diffusers' # OnnxRuntimeModel Hijack.
+        diffusers.OnnxRuntimeModel = OnnxRuntimeModel
 
-    if devices.backend == "rocm":
-        TORCH_DEVICE_TO_EP["cuda"] = ExecutionProvider.ROCm
+        diffusers.OnnxStableDiffusionPipeline = OnnxStableDiffusionPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionPipeline
 
-    from .pipelines.onnx_stable_diffusion_pipeline import OnnxStableDiffusionPipeline
-    from .pipelines.onnx_stable_diffusion_img2img_pipeline import OnnxStableDiffusionImg2ImgPipeline
-    from .pipelines.onnx_stable_diffusion_inpaint_pipeline import OnnxStableDiffusionInpaintPipeline
-    from .pipelines.onnx_stable_diffusion_upscale_pipeline import OnnxStableDiffusionUpscalePipeline
-    from .pipelines.onnx_stable_diffusion_xl_pipeline import OnnxStableDiffusionXLPipeline
-    from .pipelines.onnx_stable_diffusion_xl_img2img_pipeline import OnnxStableDiffusionXLImg2ImgPipeline
+        diffusers.OnnxStableDiffusionImg2ImgPipeline = OnnxStableDiffusionImg2ImgPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionImg2ImgPipeline
 
-    # OnnxRuntimeModel Hijack.
-    OnnxRuntimeModel.__module__ = 'diffusers'
-    diffusers.OnnxRuntimeModel = OnnxRuntimeModel
+        diffusers.OnnxStableDiffusionInpaintPipeline = OnnxStableDiffusionInpaintPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionInpaintPipeline
 
-    diffusers.OnnxStableDiffusionPipeline = OnnxStableDiffusionPipeline
-    diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionPipeline
+        diffusers.OnnxStableDiffusionUpscalePipeline = OnnxStableDiffusionUpscalePipeline
 
-    diffusers.OnnxStableDiffusionImg2ImgPipeline = OnnxStableDiffusionImg2ImgPipeline
-    diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionImg2ImgPipeline
+        diffusers.OnnxStableDiffusionXLPipeline = OnnxStableDiffusionXLPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion-xl"] = diffusers.OnnxStableDiffusionXLPipeline
 
-    diffusers.OnnxStableDiffusionInpaintPipeline = OnnxStableDiffusionInpaintPipeline
-    diffusers.pipelines.auto_pipeline.AUTO_INPAINT_PIPELINES_MAPPING["onnx-stable-diffusion"] = diffusers.OnnxStableDiffusionInpaintPipeline
+        diffusers.OnnxStableDiffusionXLImg2ImgPipeline = OnnxStableDiffusionXLImg2ImgPipeline
+        diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion-xl"] = diffusers.OnnxStableDiffusionXLImg2ImgPipeline
 
-    diffusers.OnnxStableDiffusionUpscalePipeline = OnnxStableDiffusionUpscalePipeline
+        diffusers.ORTStableDiffusionXLPipeline = diffusers.OnnxStableDiffusionXLPipeline # Huggingface model compatibility
+        diffusers.ORTStableDiffusionXLImg2ImgPipeline = diffusers.OnnxStableDiffusionXLImg2ImgPipeline
 
-    diffusers.OnnxStableDiffusionXLPipeline = OnnxStableDiffusionXLPipeline
-    diffusers.pipelines.auto_pipeline.AUTO_TEXT2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion-xl"] = diffusers.OnnxStableDiffusionXLPipeline
+        optimum.onnxruntime.modeling_diffusion._ORTDiffusionModelPart.to = ORTDiffusionModelPart_to # pylint: disable=protected-access
 
-    diffusers.OnnxStableDiffusionXLImg2ImgPipeline = OnnxStableDiffusionXLImg2ImgPipeline
-    diffusers.pipelines.auto_pipeline.AUTO_IMAGE2IMAGE_PIPELINES_MAPPING["onnx-stable-diffusion-xl"] = diffusers.OnnxStableDiffusionXLImg2ImgPipeline
+        fastapi_encoders.jsonable_encoder = jsonable_encoder
 
-    # Huggingface model compatibility
-    diffusers.ORTStableDiffusionXLPipeline = diffusers.OnnxStableDiffusionXLPipeline
-    diffusers.ORTStableDiffusionXLImg2ImgPipeline = diffusers.OnnxStableDiffusionXLImg2ImgPipeline
-
-    optimum.onnxruntime.modeling_diffusion._ORTDiffusionModelPart.to = ORTDiffusionModelPart_to # pylint: disable=protected-access
-
-    fastapi_encoders.jsonable_encoder = jsonable_encoder
-
-    print(f'ONNX: selected={opts.onnx_execution_provider}, available={available_execution_providers}')
-
-    initialized = True
-
-
-def initialize_olive():
-    global run_olive_workflow # pylint: disable=global-statement
-    from modules.launch_utils import is_installed
-    if not is_installed("olive-ai"):
-        return
-    import sys
-    import importlib
-    orig_sys_path = sys.path
-    venv_dir = os.environ.get("VENV_DIR", os.path.join(os.getcwd(), 'venv'))
-    try:
-        spec = importlib.util.find_spec('onnxruntime.transformers')
-        sys.path = [d for d in spec.submodule_search_locations + sys.path if sys.path[1] not in d or venv_dir in d]
-        from onnxruntime.transformers import convert_generation # noqa: F401
-        spec = importlib.util.find_spec('olive')
-        sys.path = spec.submodule_search_locations + sys.path
-        run_olive_workflow = importlib.import_module('olive.workflows').run
+        print(f'ONNX: version={ort.__version__} provider={opts.onnx_execution_provider}, available={available_execution_providers}')
     except Exception as e:
-        run_olive_workflow = None
-        print(f'Olive: Failed to load olive-ai: {e}')
-    sys.path = orig_sys_path
+        print(f'ONNX failed to initialize: {e}')
+    initialized = True

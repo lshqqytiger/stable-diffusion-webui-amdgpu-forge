@@ -391,26 +391,6 @@ def prepare_environment():
             "TORCH_COMMAND",
             f"pip install torch==2.3.0 torchvision --index-url {torch_index_url}",
         )
-        error = None
-        from modules import zluda_installer
-        try:
-            zluda_installer.install()
-            zluda_path = zluda_installer.find()
-            zluda_installer.make_copy(zluda_path)
-        except Exception as e:
-            error = e
-            print(f'Failed to install ZLUDA: {e}')
-        if error is None:
-            try:
-                zluda_installer.load(zluda_path)
-                torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.3.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
-                print(f'Using ZLUDA in {zluda_path}')
-            except Exception as e:
-                error = e
-                print(f'Failed to load ZLUDA: {e}')
-        if error is not None:
-            print('Using CPU-only torch')
-            torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
     elif args.use_ipex:
         backend = "ipex"
         if system == "Windows":
@@ -447,6 +427,7 @@ def prepare_environment():
                 f"pip install torch==2.3.0 torchvision --extra-index-url {torch_index_url}",
             )
         elif system == "Windows" and hip_found: # ZLUDA
+            args.zluda = True
             print("ROCm Toolkit was found.")
             backend = "cuda"
             torch_index_url = os.environ.get(
@@ -510,7 +491,29 @@ def prepare_environment():
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
 
-    if args.use_ipex or args.directml or args.use_cpu_torch:
+    if args.zluda:
+        error = None
+        from modules import zluda_installer
+        try:
+            zluda_installer.install()
+            zluda_path = zluda_installer.find()
+            zluda_installer.make_copy(zluda_path)
+        except Exception as e:
+            error = e
+            print(f'Failed to install ZLUDA: {e}')
+        if error is None:
+            try:
+                zluda_installer.load(zluda_path)
+                torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.3.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
+                print(f'Using ZLUDA in {zluda_path}')
+            except Exception as e:
+                error = e
+                print(f'Failed to load ZLUDA: {e}')
+        if error is not None:
+            print('Using CPU-only torch')
+            torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
+
+    if args.use_ipex or args.directml or args.zluda or args.use_cpu_torch:
         args.skip_torch_cuda_test = True
     if not args.skip_torch_cuda_test and not check_run_python("import torch; assert torch.cuda.is_available()"):
         raise RuntimeError(
@@ -578,9 +581,6 @@ def prepare_environment():
             else:
                 if not is_installed("onnxruntime"):
                     run_pip("install onnxruntime", "onnxruntime")
-
-        from modules.onnx_impl import initialize_olive
-        initialize_olive()
 
     if not args.skip_install:
         run_extensions_installers(settings_file=args.ui_settings_file)

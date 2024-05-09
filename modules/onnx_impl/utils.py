@@ -38,8 +38,7 @@ def move_inference_session(session: ort.InferenceSession, device: torch.device):
 
 
 def check_diffusers_cache(path: os.PathLike):
-    #from modules.shared import opts
-    return False#opts.diffusers_dir in os.path.abspath(path)
+    return False
 
 
 def check_pipeline_sdxl(cls: Type[diffusers.DiffusionPipeline]) -> bool:
