@@ -24,6 +24,14 @@ Forge also adds a few samplers, including but not limited to DDPM, DDPM Karras, 
 
 Finally, Forge promise that we will only do our jobs. Forge will never add unnecessary opinioned changes to the user interface. You are still using 100% Automatic1111 WebUI.
 
+# What's different from upstream repo?
+
+This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and [stable-diffusion-webui-amdgpu](https://github.com/lshqqytiger/stable-diffusion-webui-directml).
+
+- `--zluda`: Use [ZLUDA](https://github.com/vosen/ZLUDA) as a torch backend.
+- Support ONNX Runtime. (DirectML, CUDA, CPU)
+- Support Olive model optimization. (DirectML, CUDA)
+
 # Installing Forge
 
 If you are proficient in Git and you want to install Forge as another branch of SD-WebUI, please see [here](https://github.com/continue-revolution/sd-webui-animatediff/blob/forge/master/docs/how-to-use.md#you-have-a1111-and-you-know-git). In this way, you can reuse all SD checkpoints and all extensions you installed previously in your OG SD-WebUI, but you should know what you are doing.
