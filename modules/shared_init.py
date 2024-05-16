@@ -60,7 +60,7 @@ def initialize():
     shared.mem_mon.start()
 
     if not cmd_opts.skip_ort:
-        from modules.onnx_impl import initialize as initialize_onnx
+        from modules.onnx_impl import initialize_onnx
         initialize_onnx()
 
     initialize_zluda()
