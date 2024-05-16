@@ -10,7 +10,6 @@ import optimum.onnxruntime
 from modules import shared
 from modules.paths import models_path
 from modules.paths_internal import sd_configs_path
-from modules.sd_models import CheckpointInfo
 from modules.processing import StableDiffusionProcessing
 from modules.olive_script import config
 from modules.onnx_impl import DynamicSessionOptions, TorchCompatibleModule, VAE
@@ -28,7 +27,6 @@ SUBMODELS_LARGE = ("text_encoder_2", "unet",)
 class PipelineBase(TorchCompatibleModule, diffusers.DiffusionPipeline):
     model_type: str
     sd_model_hash: str
-    sd_checkpoint_info: CheckpointInfo
     sd_model_checkpoint: str
 
     @property
