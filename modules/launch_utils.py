@@ -498,8 +498,8 @@ def prepare_environment():
         error = None
         from modules import zluda_installer
         try:
-            zluda_installer.install()
-            zluda_path = zluda_installer.find()
+            zluda_path = zluda_installer.get_path()
+            zluda_installer.install(zluda_path)
             zluda_installer.make_copy(zluda_path)
         except Exception as e:
             error = e
