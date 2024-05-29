@@ -368,6 +368,9 @@ def prepare_environment():
     backend = "cuda"
     torch_command = "pip install torch==2.3.0 torchvision" if args.use_cpu_torch else "pip install torch==2.3.0 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
 
+    if args.zluda:
+        args.use_zluda = True
+
     if args.use_cpu_torch:
         backend = "cpu"
         torch_command = os.environ.get(
@@ -381,7 +384,7 @@ def prepare_environment():
             "pip install torch==2.0.0 torchvision==0.15.1 torch-directml",
         )
         args.skip_python_version_check = True
-    elif args.zluda:
+    elif args.use_zluda:
         print('WARNING: ZLUDA works best with SD.Next. Please consider migrating to SD.Next.')
         backend = "cuda"
         torch_index_url = os.environ.get(
@@ -427,7 +430,7 @@ def prepare_environment():
                 f"pip install torch==2.3.0 torchvision --extra-index-url {torch_index_url}",
             )
         elif system == "Windows" and hip_found: # ZLUDA
-            args.zluda = True
+            args.use_zluda = True
             print("ROCm Toolkit was found.")
             backend = "cuda"
             torch_index_url = os.environ.get(
@@ -491,7 +494,7 @@ def prepare_environment():
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
 
-    if args.zluda:
+    if args.use_zluda:
         error = None
         from modules import zluda_installer
         try:
@@ -513,7 +516,7 @@ def prepare_environment():
             print('Using CPU-only torch')
             torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
 
-    if args.use_ipex or args.directml or args.zluda or args.use_cpu_torch:
+    if args.use_ipex or args.directml or args.use_zluda or args.use_cpu_torch:
         args.skip_torch_cuda_test = True
     if not args.skip_torch_cuda_test and not check_run_python("import torch; assert torch.cuda.is_available()"):
         raise RuntimeError(
