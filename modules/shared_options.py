@@ -211,6 +211,7 @@ options_templates.update(options_section(('img2img', "img2img", "sd"), {
 options_templates.update(options_section(('onnx', "ONNX Runtime", "sd"), {
     "onnx_enable": OptionInfo(False, 'Use ONNX Runtime instead of PyTorch implementation'),
     "diffusers_pipeline": OptionInfo('ONNX Stable Diffusion', 'Diffusers pipeline', gr.Dropdown, lambda: {"choices": list(shared_items.get_pipelines())}),
+    "diffusers_vae_upcast": OptionInfo("default", "VAE upcasting", gr.Radio, {"choices": ['default', 'true', 'false']}),
     "onnx_execution_provider": OptionInfo(get_default_execution_provider().value, 'Execution Provider', gr.Dropdown, lambda: {"choices": available_execution_providers }),
     "onnx_cache_converted": OptionInfo(True, 'ONNX cache converted models'),
 
