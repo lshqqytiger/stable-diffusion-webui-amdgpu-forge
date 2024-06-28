@@ -381,7 +381,7 @@ def prepare_environment():
         backend = "directml"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.0.0 torchvision==0.15.1 torch-directml",
+            "pip install torch==2.3.1 torchvision torch-directml",
         )
         args.skip_python_version_check = True
     elif args.use_zluda:
