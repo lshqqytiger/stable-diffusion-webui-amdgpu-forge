@@ -3,7 +3,7 @@ import ctypes
 import shutil
 import zipfile
 import platform
-import requests
+import urllib.request
 from typing import Union
 
 
@@ -33,13 +33,10 @@ def install(zluda_path: os.PathLike) -> None:
     if os.path.exists(zluda_path):
         return
 
-    if platform.system() != 'Windows': # TODO
+    if platform.system() != 'Windows': # Windows-only. (PyTorch should be rebuilt on Linux)
         return
 
-    with open('_zluda', 'wb') as file:
-        res = requests.get(f'https://github.com/lshqqytiger/ZLUDA/releases/download/{RELEASE}/ZLUDA-windows-amd64.zip', timeout=30)
-        file.write(res.content)
-
+    urllib.request.urlretrieve(f'https://github.com/lshqqytiger/ZLUDA/releases/download/{RELEASE}/ZLUDA-windows-amd64.zip', '_zluda')
     with zipfile.ZipFile('_zluda', 'r') as archive:
         infos = archive.infolist()
         for info in infos:
