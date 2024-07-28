@@ -41,7 +41,7 @@ def upscale_pil_patch(model, img: Image.Image) -> Image.Image:
     """
     param = torch_utils.get_param(model)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         tensor = pil_image_to_torch_bgr(img).unsqueeze(0)  # add batch dimension
         tensor = tensor.to(device=param.device, dtype=param.dtype)
         with devices.without_autocast():
@@ -69,10 +69,10 @@ def upscale_with_model(
         for y, h, row in grid.tiles:
             newrow = []
             for x, w, tile in row:
-                logger.debug("Tile (%d, %d) %s...", x, y, tile)
+                if shared.state.interrupted:
+                    return img
                 output = upscale_pil_patch(model, tile)
                 scale_factor = output.width // tile.width
-                logger.debug("=> %s (scale factor %s)", output, scale_factor)
                 newrow.append([x * scale_factor, w * scale_factor, output])
                 p.update(1)
             newtiles.append([y * scale_factor, h * scale_factor, newrow])

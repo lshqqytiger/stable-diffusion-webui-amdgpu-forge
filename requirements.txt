@@ -5,10 +5,11 @@ accelerate
 blendmodes
 clean-fid
 diffusers
+diskcache
 einops
 facexlib
 fastapi>=0.90.1
-gradio==3.41.2
+gradio
 inflection
 jsonmerge
 kornia
@@ -18,6 +19,7 @@ omegaconf
 open-clip-torch
 
 piexif
+protobuf==3.20.0
 psutil
 pytorch_lightning
 requests
