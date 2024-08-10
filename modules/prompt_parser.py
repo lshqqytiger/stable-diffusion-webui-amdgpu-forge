@@ -141,7 +141,7 @@ class SdConditioning(list):
     A list with prompts for stable diffusion's conditioner model.
     Can also specify width and height of created image - SDXL needs it.
     """
-    def __init__(self, prompts, is_negative_prompt=False, width=None, height=None, copy_from=None):
+    def __init__(self, prompts, is_negative_prompt=False, width=None, height=None, copy_from=None, distilled_cfg_scale=None):
         super().__init__()
         self.extend(prompts)
 
@@ -151,6 +151,7 @@ class SdConditioning(list):
         self.is_negative_prompt = is_negative_prompt or getattr(copy_from, 'is_negative_prompt', False)
         self.width = width or getattr(copy_from, 'width', None)
         self.height = height or getattr(copy_from, 'height', None)
+        self.distilled_cfg_scale = distilled_cfg_scale or getattr(copy_from, 'distilled_cfg_scale', None)
 
 
 
@@ -318,17 +319,19 @@ def reconstruct_cond_batch(c: list[list[ScheduledPromptConditioning]], current_s
 
 
 def stack_conds(tensors):
-    # if prompts have wildly different lengths above the limit we'll get tensors of different shapes
-    # and won't be able to torch.stack them. So this fixes that.
-    token_count = max([x.shape[0] for x in tensors])
-    for i in range(len(tensors)):
-        if tensors[i].shape[0] != token_count:
-            last_vector = tensors[i][-1:]
-            last_vector_repeated = last_vector.repeat([token_count - tensors[i].shape[0], 1])
-            tensors[i] = torch.vstack([tensors[i], last_vector_repeated])
-
-    return torch.stack(tensors)
-
+    try:
+        result = torch.stack(tensors)
+    except:
+        # if prompts have wildly different lengths above the limit we'll get tensors of different shapes
+        # and won't be able to torch.stack them. So this fixes that.
+        token_count = max([x.shape[0] for x in tensors])
+        for i in range(len(tensors)):
+            if tensors[i].shape[0] != token_count:
+                last_vector = tensors[i][-1:]
+                last_vector_repeated = last_vector.repeat([token_count - tensors[i].shape[0], 1])
+                tensors[i] = torch.vstack([tensors[i], last_vector_repeated])
+        result = torch.stack(tensors)
+    return result
 
 
 def reconstruct_multicond_batch(c: MulticondLearnedConditioning, current_step):

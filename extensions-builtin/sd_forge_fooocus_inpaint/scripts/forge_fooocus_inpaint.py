@@ -1,14 +1,14 @@
 import os
 import torch
 import copy
+import backend.patcher.base
 
 from modules_forge.shared import add_supported_control_model
 from modules_forge.supported_controlnet import ControlModelPatcher
-from modules_forge.forge_sampler import sampling_prepare
-from ldm_patched.modules.utils import load_torch_file
-from ldm_patched.modules import model_patcher
-from ldm_patched.modules.model_management import cast_to_device, current_loaded_models
-from ldm_patched.modules.lora import model_lora_keys_unet
+from backend.sampling.sampling_function import sampling_prepare
+from backend.utils import load_torch_file
+from backend.memory_management import cast_to_device, current_loaded_models
+from backend.patcher.lora import model_lora_keys_unet
 
 
 def is_model_loaded(model):
@@ -76,7 +76,7 @@ class FooocusInpaintPatcher(ControlModelPatcher):
         vae = process.sd_model.forge_objects.vae
 
         latent_image = vae.encode(cond_original.movedim(1, -1))
-        latent_image = process.sd_model.forge_objects.unet.model.latent_format.process_in(latent_image)
+        latent_image = process.sd_model.forge_objects.vae.first_stage_model.process_in(latent_image)
         latent_mask = torch.nn.functional.max_pool2d(mask_original, (8, 8)).round().to(cond)
         feed = torch.cat([
             latent_mask.to(device=torch.device('cpu'), dtype=torch.float32),
@@ -102,8 +102,8 @@ class FooocusInpaintPatcher(ControlModelPatcher):
         if not_patched_count > 0:
             print(f"[Fooocus Patch Loader] Failed to load {not_patched_count} keys")
 
-        sigma_start = unet.model.model_sampling.percent_to_sigma(self.start_percent)
-        sigma_end = unet.model.model_sampling.percent_to_sigma(self.end_percent)
+        sigma_start = unet.model.predictor.percent_to_sigma(self.start_percent)
+        sigma_end = unet.model.predictor.percent_to_sigma(self.end_percent)
 
         def conditioning_modifier(model, x, timestep, uncond, cond, cond_scale, model_options, seed):
             if timestep > sigma_start or timestep < sigma_end:
@@ -127,5 +127,5 @@ class FooocusInpaintPatcher(ControlModelPatcher):
         return
 
 
-model_patcher.extra_weight_calculators['fooocus'] = calculate_weight_fooocus
+backend.patcher.base.extra_weight_calculators['fooocus'] = calculate_weight_fooocus
 add_supported_control_model(FooocusInpaintPatcher)

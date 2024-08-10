@@ -7,7 +7,7 @@ from modules.script_callbacks import ExtraNoiseParams, extra_noise_callback
 
 from modules.shared import opts
 import modules.shared as shared
-from modules_forge.forge_sampler import sampling_prepare, sampling_cleanup
+from backend.sampling.sampling_function import sampling_prepare, sampling_cleanup
 
 
 samplers_timesteps = [
@@ -28,49 +28,22 @@ class CompVisTimestepsDenoiser(torch.nn.Module):
     def __init__(self, model, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.inner_model = model
+        self.inner_model.alphas_cumprod = 1.0 / (self.inner_model.forge_objects.unet.model.predictor.sigmas ** 2.0 + 1.0)
 
     def forward(self, input, timesteps, **kwargs):
         return self.inner_model.apply_model(input, timesteps, **kwargs)
-
-
-class CompVisTimestepsVDenoiser(torch.nn.Module):
-    def __init__(self, model, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.inner_model = model
-
-    def predict_eps_from_z_and_v(self, x_t, t, v):
-        return torch.sqrt(self.inner_model.alphas_cumprod)[t.to(torch.int), None, None, None] * v + torch.sqrt(1 - self.inner_model.alphas_cumprod)[t.to(torch.int), None, None, None] * x_t
-
-    def forward(self, input, timesteps, **kwargs):
-        model_output = self.inner_model.apply_model(input, timesteps, **kwargs)
-        e_t = self.predict_eps_from_z_and_v(input, timesteps, model_output)
-        return e_t
 
 
 class CFGDenoiserTimesteps(CFGDenoiser):
 
     def __init__(self, sampler):
         super().__init__(sampler)
-
-        self.alphas = shared.sd_model.alphas_cumprod
         self.classic_ddim_eps_estimation = True
-
-    def get_pred_x0(self, x_in, x_out, sigma):
-        ts = sigma.to(dtype=int)
-        self.alphas = self.alphas.to(ts.device)
-
-        a_t = self.alphas[ts][:, None, None, None]
-        sqrt_one_minus_at = (1 - a_t).sqrt()
-
-        pred_x0 = (x_in - sqrt_one_minus_at * x_out) / a_t.sqrt()
-
-        return pred_x0
 
     @property
     def inner_model(self):
         if self.model_wrap is None:
-            denoiser = CompVisTimestepsVDenoiser if shared.sd_model.parameterization == "v" else CompVisTimestepsDenoiser
-            self.model_wrap = denoiser(shared.sd_model)
+            self.model_wrap = CompVisTimestepsDenoiser(shared.sd_model)
 
         return self.model_wrap
 

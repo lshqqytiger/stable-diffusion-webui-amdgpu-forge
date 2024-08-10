@@ -22,14 +22,11 @@ from modules.ui_gradio_extensions import reload_javascript
 from modules.shared import opts, cmd_opts
 
 import modules.infotext_utils as parameters_copypaste
-import modules.hypernetworks.ui as hypernetworks_ui
-import modules.textual_inversion.ui as textual_inversion_ui
-import modules.textual_inversion.textual_inversion as textual_inversion
 import modules.shared as shared
 from modules import prompt_parser, dml
-from modules.sd_hijack import model_hijack
 from modules.infotext_utils import image_from_url_text, PasteField
 from modules_forge.forge_canvas.canvas import ForgeCanvas, canvas_head
+from modules_forge import main_entry
 
 
 create_setting_component = ui_settings.create_setting_component
@@ -184,14 +181,14 @@ def update_token_counter(text, steps, styles, *, is_positive=True):
         prompt_schedules = [[[steps, text]]]
 
     try:
-        cond_stage_model = sd_models.model_data.sd_model.cond_stage_model
-        assert cond_stage_model is not None
+        get_prompt_lengths_on_ui = sd_models.model_data.sd_model.get_prompt_lengths_on_ui
+        assert get_prompt_lengths_on_ui is not None
     except Exception:
         return f"<span class='gr-box gr-text-input'>?/?</span>"
 
     flat_prompts = reduce(lambda list1, list2: list1+list2, prompt_schedules)
     prompts = [prompt_text for step, prompt_text in flat_prompts]
-    token_count, max_length = max([model_hijack.get_prompt_lengths(prompt, cond_stage_model) for prompt in prompts], key=lambda args: args[0])
+    token_count, max_length = max([get_prompt_lengths_on_ui(prompt) for prompt in prompts], key=lambda args: args[0])
     return f"<span class='gr-box gr-text-input'>{token_count}/{max_length}</span>"
 
 
@@ -311,7 +308,11 @@ def create_ui():
 
                     elif category == "cfg":
                         with gr.Row():
+                            from backend.args import args
+                            distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.5, label='Distilled CFG Scale', value=3.5, elem_id="txt2img_distilled_cfg_scale", visible=args.i_am_lllyasviel)
+                        with gr.Row():
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=7.0, elem_id="txt2img_cfg_scale")
+                            cfg_scale.change(lambda x: gr.update(interactive=(x != 1)), inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -333,15 +334,15 @@ def create_ui():
                                     hr_resize_x = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize width to", value=0, elem_id="txt2img_hr_resize_x")
                                     hr_resize_y = gr.Slider(minimum=0, maximum=2048, step=8, label="Resize height to", value=0, elem_id="txt2img_hr_resize_y")
 
-                                with FormRow(elem_id="txt2img_hires_fix_row3", variant="compact", visible=opts.hires_fix_show_sampler) as hr_sampler_container:
+                                with FormRow(elem_id="txt2img_hires_fix_row3", variant="compact") as hr_sampler_container:
 
-                                    hr_checkpoint_name = gr.Dropdown(label='Checkpoint', elem_id="hr_checkpoint", choices=["Use same checkpoint"] + modules.sd_models.checkpoint_tiles(use_short=True), value="Use same checkpoint")
-                                    create_refresh_button(hr_checkpoint_name, modules.sd_models.list_models, lambda: {"choices": ["Use same checkpoint"] + modules.sd_models.checkpoint_tiles(use_short=True)}, "hr_checkpoint_refresh")
+                                    hr_checkpoint_name = gr.Dropdown(label='Checkpoint', elem_id="hr_checkpoint", choices=["Use same checkpoint"], value="Use same checkpoint", visible=False, interactive=False)
+                                    # create_refresh_button(hr_checkpoint_name, modules.sd_models.list_models, lambda: {"choices": ["Use same checkpoint"] + modules.sd_models.checkpoint_tiles(use_short=True)}, "hr_checkpoint_refresh")
 
                                     hr_sampler_name = gr.Dropdown(label='Hires sampling method', elem_id="hr_sampler", choices=["Use same sampler"] + sd_samplers.visible_sampler_names(), value="Use same sampler")
                                     hr_scheduler = gr.Dropdown(label='Hires schedule type', elem_id="hr_scheduler", choices=["Use same scheduler"] + [x.label for x in sd_schedulers.schedulers], value="Use same scheduler")
 
-                                with FormRow(elem_id="txt2img_hires_fix_row4", variant="compact", visible=opts.hires_fix_show_prompts) as hr_prompts_container:
+                                with FormRow(elem_id="txt2img_hires_fix_row4", variant="compact") as hr_prompts_container:
                                     with gr.Column(scale=80):
                                         with gr.Row():
                                             hr_prompt = gr.Textbox(label="Hires prompt", elem_id="hires_prompt", show_label=False, lines=3, placeholder="Prompt for hires fix pass.\nLeave empty to use the same prompt as in first pass.", elem_classes=["prompt"])
@@ -397,6 +398,7 @@ def create_ui():
                 batch_count,
                 batch_size,
                 cfg_scale,
+                distilled_cfg_scale,
                 height,
                 width,
                 enable_hr,
@@ -460,6 +462,7 @@ def create_ui():
                 PasteField(toprow.prompt, "Prompt", api="prompt"),
                 PasteField(toprow.negative_prompt, "Negative prompt", api="negative_prompt"),
                 PasteField(cfg_scale, "CFG scale", api="cfg_scale"),
+                PasteField(distilled_cfg_scale, "Distilled CFG Scale", api="distilled_cfg_scale"),
                 PasteField(width, "Size-1", api="width"),
                 PasteField(height, "Size-2", api="height"),
                 PasteField(batch_size, "Batch size", api="batch_size"),
@@ -486,17 +489,6 @@ def create_ui():
             ))
 
             steps = scripts.scripts_txt2img.script('Sampler').steps
-
-            txt2img_preview_params = [
-                toprow.prompt,
-                toprow.negative_prompt,
-                steps,
-                scripts.scripts_txt2img.script('Sampler').sampler_name,
-                cfg_scale,
-                scripts.scripts_txt2img.script('Seed').seed,
-                width,
-                height,
-            ]
 
             toprow.ui_styles.dropdown.change(fn=wrap_queued_call(update_token_counter), inputs=[toprow.prompt, steps, toprow.ui_styles.dropdown], outputs=[toprow.token_counter])
             toprow.ui_styles.dropdown.change(fn=wrap_queued_call(update_negative_prompt_token_counter), inputs=[toprow.negative_prompt, steps, toprow.ui_styles.dropdown], outputs=[toprow.negative_token_counter])
@@ -658,8 +650,12 @@ def create_ui():
 
                     elif category == "cfg":
                         with gr.Row():
+                            from backend.args import args as backend_args
+                            distilled_cfg_scale = gr.Slider(minimum=0.0, maximum=30.0, step=0.5, label='Distilled CFG Scale', value=3.5, elem_id="img2img_distilled_cfg_scale", visible=backend_args.i_am_lllyasviel)
+                        with gr.Row():
                             cfg_scale = gr.Slider(minimum=1.0, maximum=30.0, step=0.5, label='CFG Scale', value=7.0, elem_id="img2img_cfg_scale")
                             image_cfg_scale = gr.Slider(minimum=0, maximum=3.0, step=0.05, label='Image CFG Scale', value=1.5, elem_id="img2img_image_cfg_scale", visible=False)
+                            cfg_scale.change(lambda x: gr.update(interactive=(x != 1)), inputs=[cfg_scale], outputs=[toprow.negative_prompt], queue=False, show_progress=False)
 
                     elif category == "checkboxes":
                         with FormRow(elem_classes="checkboxes-row", variant="compact"):
@@ -738,6 +734,7 @@ def create_ui():
                 batch_count,
                 batch_size,
                 cfg_scale,
+                distilled_cfg_scale,
                 image_cfg_scale,
                 denoising_strength,
                 selected_scale_tab,
@@ -834,6 +831,7 @@ def create_ui():
                 (toprow.prompt, "Prompt"),
                 (toprow.negative_prompt, "Negative prompt"),
                 (cfg_scale, "CFG scale"),
+                (distilled_cfg_scale, "Distilled CFG Scale"),
                 (image_cfg_scale, "Image CFG scale"),
                 (width, "Size-1"),
                 (height, "Size-2"),
@@ -888,229 +886,17 @@ def create_ui():
 
     modelmerger_ui = ui_checkpoint_merger.UiCheckpointMerger()
 
-    with gr.Blocks(analytics_enabled=False, head=canvas_head) as train_interface:
-        with gr.Row(equal_height=False):
-            gr.HTML(value="<p style='margin-bottom: 0.7em'>See <b><a href=\"https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Textual-Inversion\">wiki</a></b> for detailed explanation.</p>")
-
-        with ResizeHandleRow(variant="compact", equal_height=False):
-            with gr.Tabs(elem_id="train_tabs"):
-
-                with gr.Tab(label="Create embedding", id="create_embedding"):
-                    new_embedding_name = gr.Textbox(label="Name", elem_id="train_new_embedding_name")
-                    initialization_text = gr.Textbox(label="Initialization text", value="*", elem_id="train_initialization_text")
-                    nvpt = gr.Slider(label="Number of vectors per token", minimum=1, maximum=75, step=1, value=1, elem_id="train_nvpt")
-                    overwrite_old_embedding = gr.Checkbox(value=False, label="Overwrite Old Embedding", elem_id="train_overwrite_old_embedding")
-
-                    with gr.Row():
-                        with gr.Column(scale=3):
-                            gr.HTML(value="")
-
-                        with gr.Column():
-                            create_embedding = gr.Button(value="Create embedding", variant='primary', elem_id="train_create_embedding")
-
-                with gr.Tab(label="Create hypernetwork", id="create_hypernetwork"):
-                    new_hypernetwork_name = gr.Textbox(label="Name", elem_id="train_new_hypernetwork_name")
-                    new_hypernetwork_sizes = gr.CheckboxGroup(label="Modules", value=["768", "320", "640", "1280"], choices=["768", "1024", "320", "640", "1280"], elem_id="train_new_hypernetwork_sizes")
-                    new_hypernetwork_layer_structure = gr.Textbox("1, 2, 1", label="Enter hypernetwork layer structure", placeholder="1st and last digit must be 1. ex:'1, 2, 1'", elem_id="train_new_hypernetwork_layer_structure")
-                    new_hypernetwork_activation_func = gr.Dropdown(value="linear", label="Select activation function of hypernetwork. Recommended : Swish / Linear(none)", choices=hypernetworks_ui.keys, elem_id="train_new_hypernetwork_activation_func")
-                    new_hypernetwork_initialization_option = gr.Dropdown(value = "Normal", label="Select Layer weights initialization. Recommended: Kaiming for relu-like, Xavier for sigmoid-like, Normal otherwise", choices=["Normal", "KaimingUniform", "KaimingNormal", "XavierUniform", "XavierNormal"], elem_id="train_new_hypernetwork_initialization_option")
-                    new_hypernetwork_add_layer_norm = gr.Checkbox(label="Add layer normalization", elem_id="train_new_hypernetwork_add_layer_norm")
-                    new_hypernetwork_use_dropout = gr.Checkbox(label="Use dropout", elem_id="train_new_hypernetwork_use_dropout")
-                    new_hypernetwork_dropout_structure = gr.Textbox("0, 0, 0", label="Enter hypernetwork Dropout structure (or empty). Recommended : 0~0.35 incrementing sequence: 0, 0.05, 0.15", placeholder="1st and last digit must be 0 and values should be between 0 and 1. ex:'0, 0.01, 0'")
-                    overwrite_old_hypernetwork = gr.Checkbox(value=False, label="Overwrite Old Hypernetwork", elem_id="train_overwrite_old_hypernetwork")
-
-                    with gr.Row():
-                        with gr.Column(scale=3):
-                            gr.HTML(value="")
-
-                        with gr.Column():
-                            create_hypernetwork = gr.Button(value="Create hypernetwork", variant='primary', elem_id="train_create_hypernetwork")
-
-                def get_textual_inversion_template_names():
-                    return sorted(textual_inversion.textual_inversion_templates)
-
-                with gr.Tab(label="Train", id="train"):
-                    gr.HTML(value="<p style='margin-bottom: 0.7em'>Train an embedding or Hypernetwork; you must specify a directory with a set of 1:1 ratio images <a href=\"https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Textual-Inversion\" style=\"font-weight:bold;\">[wiki]</a></p>")
-                    with FormRow():
-                        train_embedding_name = gr.Dropdown(label='Embedding', elem_id="train_embedding", choices=sorted(sd_hijack.model_hijack.embedding_db.word_embeddings.keys()))
-                        create_refresh_button(train_embedding_name, sd_hijack.model_hijack.embedding_db.load_textual_inversion_embeddings, lambda: {"choices": sorted(sd_hijack.model_hijack.embedding_db.word_embeddings.keys())}, "refresh_train_embedding_name")
-
-                        train_hypernetwork_name = gr.Dropdown(label='Hypernetwork', elem_id="train_hypernetwork", choices=sorted(shared.hypernetworks))
-                        create_refresh_button(train_hypernetwork_name, shared.reload_hypernetworks, lambda: {"choices": sorted(shared.hypernetworks)}, "refresh_train_hypernetwork_name")
-
-                    with FormRow():
-                        embedding_learn_rate = gr.Textbox(label='Embedding Learning rate', placeholder="Embedding Learning rate", value="0.005", elem_id="train_embedding_learn_rate")
-                        hypernetwork_learn_rate = gr.Textbox(label='Hypernetwork Learning rate', placeholder="Hypernetwork Learning rate", value="0.00001", elem_id="train_hypernetwork_learn_rate")
-
-                    with FormRow():
-                        clip_grad_mode = gr.Dropdown(value="disabled", label="Gradient Clipping", choices=["disabled", "value", "norm"])
-                        clip_grad_value = gr.Textbox(placeholder="Gradient clip value", value="0.1", show_label=False)
-
-                    with FormRow():
-                        batch_size = gr.Number(label='Batch size', value=1, precision=0, elem_id="train_batch_size")
-                        gradient_step = gr.Number(label='Gradient accumulation steps', value=1, precision=0, elem_id="train_gradient_step")
-
-                    dataset_directory = gr.Textbox(label='Dataset directory', placeholder="Path to directory with input images", elem_id="train_dataset_directory")
-                    log_directory = gr.Textbox(label='Log directory', placeholder="Path to directory where to write outputs", value="textual_inversion", elem_id="train_log_directory")
-
-                    with FormRow():
-                        template_file = gr.Dropdown(label='Prompt template', value="style_filewords.txt", elem_id="train_template_file", choices=get_textual_inversion_template_names())
-                        create_refresh_button(template_file, textual_inversion.list_textual_inversion_templates, lambda: {"choices": get_textual_inversion_template_names()}, "refrsh_train_template_file")
-
-                    training_width = gr.Slider(minimum=64, maximum=2048, step=8, label="Width", value=512, elem_id="train_training_width")
-                    training_height = gr.Slider(minimum=64, maximum=2048, step=8, label="Height", value=512, elem_id="train_training_height")
-                    varsize = gr.Checkbox(label="Do not resize images", value=False, elem_id="train_varsize")
-                    steps = gr.Number(label='Max steps', value=100000, precision=0, elem_id="train_steps")
-
-                    with FormRow():
-                        create_image_every = gr.Number(label='Save an image to log directory every N steps, 0 to disable', value=500, precision=0, elem_id="train_create_image_every")
-                        save_embedding_every = gr.Number(label='Save a copy of embedding to log directory every N steps, 0 to disable', value=500, precision=0, elem_id="train_save_embedding_every")
-
-                    use_weight = gr.Checkbox(label="Use PNG alpha channel as loss weight", value=False, elem_id="use_weight")
-
-                    save_image_with_stored_embedding = gr.Checkbox(label='Save images with embedding in PNG chunks', value=True, elem_id="train_save_image_with_stored_embedding")
-                    preview_from_txt2img = gr.Checkbox(label='Read parameters (prompt, etc...) from txt2img tab when making previews', value=False, elem_id="train_preview_from_txt2img")
-
-                    shuffle_tags = gr.Checkbox(label="Shuffle tags by ',' when creating prompts.", value=False, elem_id="train_shuffle_tags")
-                    tag_drop_out = gr.Slider(minimum=0, maximum=1, step=0.1, label="Drop out tags when creating prompts.", value=0, elem_id="train_tag_drop_out")
-
-                    latent_sampling_method = gr.Radio(label='Choose latent sampling method', value="once", choices=['once', 'deterministic', 'random'], elem_id="train_latent_sampling_method")
-
-                    with gr.Row():
-                        train_embedding = gr.Button(value="Train Embedding", variant='primary', elem_id="train_train_embedding")
-                        interrupt_training = gr.Button(value="Interrupt", elem_id="train_interrupt_training")
-                        train_hypernetwork = gr.Button(value="Train Hypernetwork", variant='primary', elem_id="train_train_hypernetwork")
-
-                params = script_callbacks.UiTrainTabParams(txt2img_preview_params)
-
-                script_callbacks.ui_train_tabs_callback(params)
-
-            with gr.Column(elem_id='ti_gallery_container'):
-                ti_output = gr.Text(elem_id="ti_output", value="", show_label=False)
-                gr.Gallery(label='Output', show_label=False, elem_id='ti_gallery', columns=4, object_fit="contain")
-                gr.HTML(elem_id="ti_progress", value="")
-                ti_outcome = gr.HTML(elem_id="ti_error", value="")
-
-        create_embedding.click(
-            fn=textual_inversion_ui.create_embedding,
-            inputs=[
-                new_embedding_name,
-                initialization_text,
-                nvpt,
-                overwrite_old_embedding,
-            ],
-            outputs=[
-                train_embedding_name,
-                ti_output,
-                ti_outcome,
-            ]
-        )
-
-        create_hypernetwork.click(
-            fn=hypernetworks_ui.create_hypernetwork,
-            inputs=[
-                new_hypernetwork_name,
-                new_hypernetwork_sizes,
-                overwrite_old_hypernetwork,
-                new_hypernetwork_layer_structure,
-                new_hypernetwork_activation_func,
-                new_hypernetwork_initialization_option,
-                new_hypernetwork_add_layer_norm,
-                new_hypernetwork_use_dropout,
-                new_hypernetwork_dropout_structure
-            ],
-            outputs=[
-                train_hypernetwork_name,
-                ti_output,
-                ti_outcome,
-            ]
-        )
-
-        train_embedding.click(
-            fn=wrap_gradio_gpu_call(textual_inversion_ui.train_embedding, extra_outputs=[gr.update()]),
-            _js="start_training_textual_inversion",
-            inputs=[
-                dummy_component,
-                train_embedding_name,
-                embedding_learn_rate,
-                batch_size,
-                gradient_step,
-                dataset_directory,
-                log_directory,
-                training_width,
-                training_height,
-                varsize,
-                steps,
-                clip_grad_mode,
-                clip_grad_value,
-                shuffle_tags,
-                tag_drop_out,
-                latent_sampling_method,
-                use_weight,
-                create_image_every,
-                save_embedding_every,
-                template_file,
-                save_image_with_stored_embedding,
-                preview_from_txt2img,
-                *txt2img_preview_params,
-            ],
-            outputs=[
-                ti_output,
-                ti_outcome,
-            ]
-        )
-
-        train_hypernetwork.click(
-            fn=wrap_gradio_gpu_call(hypernetworks_ui.train_hypernetwork, extra_outputs=[gr.update()]),
-            _js="start_training_textual_inversion",
-            inputs=[
-                dummy_component,
-                train_hypernetwork_name,
-                hypernetwork_learn_rate,
-                batch_size,
-                gradient_step,
-                dataset_directory,
-                log_directory,
-                training_width,
-                training_height,
-                varsize,
-                steps,
-                clip_grad_mode,
-                clip_grad_value,
-                shuffle_tags,
-                tag_drop_out,
-                latent_sampling_method,
-                use_weight,
-                create_image_every,
-                save_embedding_every,
-                template_file,
-                preview_from_txt2img,
-                *txt2img_preview_params,
-            ],
-            outputs=[
-                ti_output,
-                ti_outcome,
-            ]
-        )
-
-        interrupt_training.click(
-            fn=lambda: shared.state.interrupt(),
-            inputs=[],
-            outputs=[],
-        )
-
     loadsave = ui_loadsave.UiLoadsave(cmd_opts.ui_config_file)
     ui_settings_from_file = loadsave.ui_settings.copy()
 
     settings.create_ui(loadsave, dummy_component)
 
     interfaces = [
-        (txt2img_interface, "txt2img", "txt2img"),
-        (img2img_interface, "img2img", "img2img"),
+        (txt2img_interface, "Txt2img", "txt2img"),
+        (img2img_interface, "Img2img", "img2img"),
         (extras_interface, "Extras", "extras"),
         (pnginfo_interface, "PNG Info", "pnginfo"),
         (modelmerger_ui.blocks, "Checkpoint Merger", "modelmerger"),
-        (train_interface, "Train", "train"),
     ]
 
     interfaces += script_callbacks.ui_tabs_callback()
@@ -1154,11 +940,13 @@ def create_ui():
 
         settings.add_functionality(demo)
 
-        update_image_cfg_scale_visibility = lambda: gr.update(visible=shared.sd_model and shared.sd_model.cond_stage_key == "edit")
+        update_image_cfg_scale_visibility = lambda: gr.update(visible=False)
         settings.text_settings.change(fn=update_image_cfg_scale_visibility, inputs=[], outputs=[image_cfg_scale])
         demo.load(fn=update_image_cfg_scale_visibility, inputs=[], outputs=[image_cfg_scale])
 
-        modelmerger_ui.setup_ui(dummy_component=dummy_component, sd_model_checkpoint_component=settings.component_dict['sd_model_checkpoint'])
+        modelmerger_ui.setup_ui(dummy_component=dummy_component, sd_model_checkpoint_component=main_entry.ui_checkpoint)
+
+        main_entry.forge_main_entry()
 
     if ui_settings_from_file != loadsave.ui_settings:
         loadsave.dump_defaults()

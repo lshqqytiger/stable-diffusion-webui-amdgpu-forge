@@ -3,7 +3,7 @@ from modules import processing
 
 from lib_controlnet import external_code
 
-from modules_forge.forge_util import HWC3
+from modules_forge.utils import HWC3
 
 from PIL import Image, ImageFilter, ImageOps
 from lib_controlnet.lvminthin import lvmin_thin, nake_nms
@@ -19,7 +19,6 @@ import cv2
 import logging
 
 from typing import Any, Callable, Dict, List
-from modules.safe import unsafe_torch_load
 from lib_controlnet.logging import logger
 
 
@@ -28,7 +27,7 @@ def load_state_dict(ckpt_path, location="cpu"):
     if extension.lower() == ".safetensors":
         state_dict = safetensors.torch.load_file(ckpt_path, device=location)
     else:
-        state_dict = unsafe_torch_load(ckpt_path, map_location=torch.device(location))
+        state_dict = torch.load(ckpt_path, map_location=torch.device(location))
     state_dict = get_state_dict(state_dict)
     logger.info(f"Loaded state_dict from [{ckpt_path}]")
     return state_dict

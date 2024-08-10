@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 from modules import devices, images, sd_vae_approx, sd_samplers, sd_vae_taesd, shared, sd_models
 from modules.shared import opts, state
-from modules_forge.forge_sampler import sampling_prepare, sampling_cleanup
+from backend.sampling.sampling_function import sampling_prepare, sampling_cleanup
 from modules import extra_networks
 import k_diffusion.sampling
 
@@ -47,10 +47,18 @@ def samples_to_images_tensor(sample, approximation=None, model=None):
     if approximation == 2:
         x_sample = sd_vae_approx.cheap_approximation(sample)
     elif approximation == 1:
-        x_sample = sd_vae_approx.model()(sample.to(devices.device, devices.dtype)).detach()
+        m = sd_vae_approx.model()
+        if m is None:
+            x_sample = sd_vae_approx.cheap_approximation(sample)
+        else:
+            x_sample = m(sample.to(devices.device, devices.dtype)).detach()
     elif approximation == 3:
-        x_sample = sd_vae_taesd.decoder_model()(sample.to(devices.device, devices.dtype)).detach()
-        x_sample = x_sample * 2 - 1
+        m = sd_vae_taesd.decoder_model()
+        if m is None:
+            x_sample = sd_vae_approx.cheap_approximation(sample)
+        else:
+            x_sample = m(sample.to(devices.device, devices.dtype)).detach()
+            x_sample = x_sample * 2 - 1
     else:
         if model is None:
             model = shared.sd_model
@@ -237,7 +245,7 @@ class Sampler:
         self.eta_infotext_field = 'Eta'
         self.eta_default = 1.0
 
-        self.conditioning_key = getattr(shared.sd_model.model, 'conditioning_key', 'crossattn')
+        self.conditioning_key = 'crossattn'
 
         self.p = None
         self.model_wrap_cfg = None

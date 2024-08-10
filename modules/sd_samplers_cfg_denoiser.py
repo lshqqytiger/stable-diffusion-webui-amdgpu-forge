@@ -6,7 +6,7 @@ import modules.shared as shared
 from modules.script_callbacks import CFGDenoiserParams, cfg_denoiser_callback
 from modules.script_callbacks import CFGDenoisedParams, cfg_denoised_callback
 from modules.script_callbacks import AfterCFGCallbackParams, cfg_after_cfg_callback
-from modules_forge import forge_sampler
+from backend.sampling.sampling_function import sampling_function
 
 
 def catenate_conds(conds):
@@ -58,6 +58,9 @@ class CFGDenoiser(torch.nn.Module):
         self.sampler = sampler
         self.model_wrap = None
         self.p = None
+
+        self.need_last_noise_uncond = False
+        self.last_noise_uncond = None
 
         # Backward Compatibility
         self.mask_before_denoising = False
@@ -170,7 +173,7 @@ class CFGDenoiser(torch.nn.Module):
             uncond = self.sampler.sampler_extra_args['uncond']
 
         cond_composition, cond = prompt_parser.reconstruct_multicond_batch(cond, self.step)
-        uncond = prompt_parser.reconstruct_cond_batch(uncond, self.step)
+        uncond = prompt_parser.reconstruct_cond_batch(uncond, self.step) if uncond is not None else None
 
         if self.mask is not None:
             noisy_initial_latent = self.init_latent + sigma[:, None, None, None] * torch.randn_like(self.init_latent).to(self.init_latent)
@@ -179,8 +182,10 @@ class CFGDenoiser(torch.nn.Module):
         denoiser_params = CFGDenoiserParams(x, image_cond, sigma, state.sampling_step, state.sampling_steps, cond, uncond, self)
         cfg_denoiser_callback(denoiser_params)
 
-        denoised = forge_sampler.forge_sample(self, denoiser_params=denoiser_params,
-                                              cond_scale=cond_scale, cond_composition=cond_composition)
+        denoised, cond_pred, uncond_pred = sampling_function(self, denoiser_params=denoiser_params, cond_scale=cond_scale, cond_composition=cond_composition)
+
+        if self.need_last_noise_uncond:
+            self.last_noise_uncond = (x - uncond_pred) / sigma[:, None, None, None]
 
         if self.mask is not None:
             blended_latent = denoised * self.nmask + self.init_latent * self.mask
@@ -207,4 +212,3 @@ class CFGDenoiser(torch.nn.Module):
             return eps
 
         return denoised.to(device=original_x_device, dtype=original_x_dtype)
-

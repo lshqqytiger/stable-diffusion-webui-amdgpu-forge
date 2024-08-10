@@ -3,9 +3,9 @@ import stat
 from collections import OrderedDict
 
 from modules import shared, sd_models
-from lib_controlnet.enums import StableDiffusionVersion
 from modules_forge.shared import controlnet_dir, supported_preprocessors
 
+from typing import Dict, Tuple, List
 
 CN_MODEL_EXTS = [".pt", ".pth", ".ckpt", ".safetensors", ".bin", ".patch"]
 
@@ -56,6 +56,10 @@ controlnet_names = ['None']
 def get_preprocessor(name):
     return supported_preprocessors.get(name, None)
 
+def get_default_preprocessor(tag):
+    ps = get_filtered_preprocessor_names(tag)
+    assert len(ps) > 0
+    return ps[0] if len(ps) == 1 else ps[1]
 
 def get_sorted_preprocessors():
     preprocessors = [p for k, p in supported_preprocessors.items() if k != 'None']
@@ -103,13 +107,7 @@ def get_filtered_controlnet_names(tag):
     model_filename_filters = []
     for p in filtered_preprocessors.values():
         model_filename_filters += p.model_filename_filters
-    return [
-        x for x in controlnet_names
-        if x == 'None' or (
-            any(f.lower() in x.lower() for f in model_filename_filters) and
-            get_sd_version().is_compatible_with(StableDiffusionVersion.detect_from_model_name(x))
-        )
-    ]
+    return [x for x in controlnet_names if x == 'None' or any(f.lower() in x.lower() for f in model_filename_filters)]
 
 
 def update_controlnet_filenames():
@@ -133,14 +131,41 @@ def update_controlnet_filenames():
     return
 
 
-def get_sd_version() -> StableDiffusionVersion:
-    if not shared.sd_model:
-        return StableDiffusionVersion.UNKNOWN
-    if shared.sd_model.is_sdxl:
-        return StableDiffusionVersion.SDXL
-    elif shared.sd_model.is_sd2:
-        return StableDiffusionVersion.SD2x
-    elif shared.sd_model.is_sd1:
-        return StableDiffusionVersion.SD1x
+def select_control_type(
+    control_type: str,
+) -> Tuple[List[str], List[str], str, str]:
+    global controlnet_names
+
+    pattern = control_type.lower()
+    all_models = list(controlnet_names)
+
+    if pattern == "all":
+        preprocessors = get_sorted_preprocessors().values()
+        return [
+            [p.name for p in preprocessors],
+            all_models,
+            'none',  # default option
+            "None"   # default model
+        ]
+
+    filtered_model_list = get_filtered_controlnet_names(control_type)
+
+    if pattern == "none":
+        filtered_model_list.append("None")
+
+    assert len(filtered_model_list) > 0, "'None' model should always be available."
+    if len(filtered_model_list) == 1:
+        default_model = "None"
     else:
-        return StableDiffusionVersion.UNKNOWN
+        default_model = filtered_model_list[1]
+        for x in filtered_model_list:
+            if "11" in x.split("[")[0]:
+                default_model = x
+                break
+
+    return (
+        get_filtered_preprocessor_names(control_type),
+        filtered_model_list,
+        get_default_preprocessor(control_type),
+        default_model
+    )
