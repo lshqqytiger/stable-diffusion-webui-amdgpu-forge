@@ -17,7 +17,7 @@ from typing import Any
 
 import modules.sd_hijack
 from modules import devices, prompt_parser, masking, sd_samplers, lowvram, infotext_utils, extra_networks, sd_vae_approx, scripts, sd_samplers_common, sd_unet, errors, rng, profiling
-from modules.rng import slerp # noqa: F401
+from modules.rng import slerp, get_noise_source_type  # noqa: F401
 from modules.sd_samplers_common import images_tensor_to_samples, decode_first_stage, approximation_indexes
 from modules.shared import opts, cmd_opts, state
 from modules.onnx_impl import check_parameters_changed, preprocess_pipeline
@@ -730,6 +730,8 @@ def create_infotext(p, all_prompts, all_seeds, all_subseeds, comments=None, iter
     if p.sd_model.use_distilled_cfg_scale:
         generation_params['Distilled CFG Scale'] = p.distilled_cfg_scale
 
+    noise_source_type = get_noise_source_type()
+
     generation_params.update({
         "Image CFG scale": getattr(p, 'image_cfg_scale', None),
         "Seed": p.all_seeds[0] if use_main_prompt else all_seeds[index],
@@ -751,7 +753,7 @@ def create_infotext(p, all_prompts, all_seeds, all_subseeds, comments=None, iter
         "Token merging ratio": None if token_merging_ratio == 0 else token_merging_ratio,
         "Token merging ratio hr": None if not enable_hr or token_merging_ratio_hr == 0 else token_merging_ratio_hr,
         "Init image hash": getattr(p, 'init_img_hash', None),
-        "RNG": opts.randn_source if opts.randn_source != "GPU" else None,
+        "RNG": noise_source_type if noise_source_type != "GPU" else None,
         "Tiling": "True" if p.tiling else None,
         **p.extra_generation_params,
         "Version": program_version() if opts.add_version_to_infotext else None,
@@ -781,11 +783,12 @@ need_global_unload = False
 def process_images(p: StableDiffusionProcessing) -> Processed:
     global need_global_unload
 
-    if need_global_unload:
-        need_global_unload = False
+    p.sd_model, just_reloaded = forge_model_reload()
+
+    if need_global_unload and not just_reloaded:
         memory_management.unload_all_models()
 
-    p.sd_model = forge_model_reload()
+    need_global_unload = False
 
     if p.scripts is not None:
         p.scripts.before_process(p)

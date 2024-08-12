@@ -48,7 +48,15 @@ def apply_rope(xq, xk, freqs_cis):
 def timestep_embedding(t, dim, max_period=10000, time_factor=1000.0):
     t = time_factor * t
     half = dim // 2
-    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(t.device)
+
+    # TODO: Once A trainer for flux get popular, make timestep_embedding consistent to that trainer
+
+    # Do not block CUDA steam, but having about 1e-4 differences with Flux official codes:
+    freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32, device=t.device) / half)
+
+    # Block CUDA steam, but consistent with official codes:
+    # freqs = torch.exp(-math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(t.device)
+
     args = t[:, None].float() * freqs[None]
     del freqs
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
@@ -364,7 +372,7 @@ class IntegratedFluxTransformer2DModel(nn.Module):
         del vec
         return img
 
-    def forward(self, x, timestep, context, y, guidance, **kwargs):
+    def forward(self, x, timestep, context, y, guidance=None, **kwargs):
         bs, c, h, w = x.shape
         input_device = x.device
         input_dtype = x.dtype
