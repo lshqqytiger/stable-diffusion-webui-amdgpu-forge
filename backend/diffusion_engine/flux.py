@@ -7,18 +7,15 @@ from backend.patcher.vae import VAE
 from backend.patcher.unet import UnetPatcher
 from backend.text_processing.classic_engine import ClassicTextProcessingEngine
 from backend.text_processing.t5_engine import T5TextProcessingEngine
-from backend.args import dynamic_args, args
+from backend.args import dynamic_args
 from backend.modules.k_prediction import PredictionFlux
 from backend import memory_management
 
 
 class Flux(ForgeDiffusionEngine):
-    matched_guesses = [model_list.Flux]
+    matched_guesses = [model_list.Flux, model_list.FluxSchnell]
 
     def __init__(self, estimated_config, huggingface_components):
-        if not args.i_am_lllyasviel:
-            raise NotImplementedError('Flux is not implemented yet!')
-
         super().__init__(estimated_config, huggingface_components)
         self.is_inpaint = False
 
@@ -35,10 +32,16 @@ class Flux(ForgeDiffusionEngine):
 
         vae = VAE(model=huggingface_components['vae'])
 
+        if 'schnell' in estimated_config.huggingface_repo.lower():
+            k_predictor = PredictionFlux(sigma_data=1.0, prediction_type='const', shift=1.0, timesteps=10000)
+        else:
+            k_predictor = PredictionFlux(sigma_data=1.0, prediction_type='const', shift=1.15, timesteps=10000)
+            self.use_distilled_cfg_scale = True
+
         unet = UnetPatcher.from_model(
             model=huggingface_components['transformer'],
             diffusers_scheduler=None,
-            k_predictor=PredictionFlux(sigma_data=1.0, prediction_type='const', shift=1.15, timesteps=10000),
+            k_predictor=k_predictor,
             config=estimated_config
         )
 
@@ -66,11 +69,6 @@ class Flux(ForgeDiffusionEngine):
         self.forge_objects_original = self.forge_objects.shallow_copy()
         self.forge_objects_after_applying_lora = self.forge_objects.shallow_copy()
 
-        self.use_distilled_cfg_scale = True
-
-        # WebUI Legacy
-        self.first_stage_model = vae.first_stage_model
-
     def set_clip_skip(self, clip_skip):
         self.text_processing_engine_l.clip_skip = clip_skip
 
@@ -79,21 +77,20 @@ class Flux(ForgeDiffusionEngine):
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
         cond_l, pooled_l = self.text_processing_engine_l(prompt)
         cond_t5 = self.text_processing_engine_t5(prompt)
+        cond = dict(crossattn=cond_t5, vector=pooled_l)
 
-        distilled_cfg_scale = getattr(prompt, 'distilled_cfg_scale', 3.5) or 3.5
-        print(f'distilled_cfg_scale = {distilled_cfg_scale}')
-
-        cond = dict(
-            crossattn=cond_t5,
-            vector=pooled_l,
-            guidance=torch.FloatTensor([distilled_cfg_scale] * len(prompt))
-        )
+        if self.use_distilled_cfg_scale:
+            distilled_cfg_scale = getattr(prompt, 'distilled_cfg_scale', 3.5) or 3.5
+            cond['guidance'] = torch.FloatTensor([distilled_cfg_scale] * len(prompt))
+            print(f'Distilled CFG Scale: {distilled_cfg_scale}')
+        else:
+            print('Distilled CFG Scale will be ignored for Schnell')
 
         return cond
 
     @torch.inference_mode()
     def get_prompt_lengths_on_ui(self, prompt):
-        _, token_count = self.text_processing_engine_t5.process_texts([prompt])
+        token_count = len(self.text_processing_engine_t5.tokenize([prompt])[0])
         return token_count, max(255, token_count)
 
     @torch.inference_mode()

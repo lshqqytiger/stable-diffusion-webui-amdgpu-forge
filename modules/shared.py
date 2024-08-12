@@ -7,6 +7,7 @@ from modules import shared_cmd_options, shared_gradio_themes, options, shared_it
 from modules.paths_internal import models_path, script_path, data_path, sd_configs_path, sd_default_config, sd_model_file, default_sd_model_file, extensions_dir, extensions_builtin_dir  # noqa: F401
 from modules import util
 from typing import TYPE_CHECKING
+from backend import memory_management
 
 if TYPE_CHECKING:
     from modules import shared_state, styles, interrogate, shared_total_tqdm, memmon
@@ -16,7 +17,7 @@ parser = shared_cmd_options.parser
 
 batch_cond_uncond = True  # old field, unused now in favor of shared.opts.batch_cond_uncond
 parallel_processing_allowed = True
-styles_filename = cmd_opts.styles_file = cmd_opts.styles_file if len(cmd_opts.styles_file) > 0 else [os.path.join(data_path, 'styles.csv')]
+styles_filename = cmd_opts.styles_file = cmd_opts.styles_file if len(cmd_opts.styles_file) > 0 else [os.path.join(data_path, 'styles.csv'), os.path.join(data_path, 'styles_integrated.csv')]
 config_filename = cmd_opts.ui_settings_file
 hide_dirs = {"visible": not cmd_opts.hide_ui_dir_config}
 
@@ -26,7 +27,7 @@ device: str = None
 
 weight_load_location: str = None
 
-xformers_available = False
+xformers_available = memory_management.xformers_enabled()
 
 hypernetworks = {}
 

@@ -168,15 +168,16 @@ class CFGDenoiser(torch.nn.Module):
             x = x * (((real_sigma ** 2.0 + real_sigma_data ** 2.0) ** 0.5)[:, None, None, None])
             sigma = real_sigma
 
-        if sd_samplers_common.apply_refiner(self, x):
-            cond = self.sampler.sampler_extra_args['cond']
-            uncond = self.sampler.sampler_extra_args['uncond']
+        # if sd_samplers_common.apply_refiner(self, x):
+        #     cond = self.sampler.sampler_extra_args['cond']
+        #     uncond = self.sampler.sampler_extra_args['uncond']
 
         cond_composition, cond = prompt_parser.reconstruct_multicond_batch(cond, self.step)
         uncond = prompt_parser.reconstruct_cond_batch(uncond, self.step) if uncond is not None else None
 
         if self.mask is not None:
-            noisy_initial_latent = self.init_latent + sigma[:, None, None, None] * torch.randn_like(self.init_latent).to(self.init_latent)
+            predictor = self.inner_model.inner_model.forge_objects.unet.model.predictor
+            noisy_initial_latent = predictor.noise_scaling(sigma[:, None, None, None], torch.randn_like(self.init_latent).to(self.init_latent), self.init_latent, max_denoise=False)
             x = x * self.nmask + noisy_initial_latent * self.mask
 
         denoiser_params = CFGDenoiserParams(x, image_cond, sigma, state.sampling_step, state.sampling_steps, cond, uncond, self)
