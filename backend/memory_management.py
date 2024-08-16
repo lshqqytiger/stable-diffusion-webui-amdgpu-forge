@@ -302,7 +302,9 @@ def state_dict_size(sd, exclude_device=None):
 
 
 def state_dict_dtype(state_dict):
-    for k in state_dict.keys():
+    for k, v in state_dict.items():
+        if hasattr(v, 'is_gguf'):
+            return 'gguf'
         if 'bitsandbytes__nf4' in k:
             return 'nf4'
         if 'bitsandbytes__fp4' in k:
@@ -375,15 +377,16 @@ class LoadedModel:
         self.model.model_patches_to(self.model.model_dtype())
 
         try:
-            self.real_model = self.model.patch_model(device_to=patch_model_to)
+            self.real_model = self.model.forge_patch_model(patch_model_to)
         except Exception as e:
-            self.model.unpatch_model(self.model.offload_device)
+            self.model.forge_unpatch_model(self.model.offload_device)
             self.model_unload()
             raise e
 
         if not do_not_need_cpu_swap:
             memory_in_swap = 0
             mem_counter = 0
+            mem_cannot_cast = 0
             for m in self.real_model.modules():
                 if hasattr(m, "parameters_manual_cast"):
                     m.prev_parameters_manual_cast = m.parameters_manual_cast
@@ -399,8 +402,12 @@ class LoadedModel:
                             m._apply(lambda x: x.pin_memory())
                 elif hasattr(m, "weight"):
                     m.to(self.device)
-                    mem_counter += module_size(m)
-                    print(f"[Memory Management] Swap disabled for", type(m).__name__)
+                    module_mem = module_size(m)
+                    mem_counter += module_mem
+                    mem_cannot_cast += module_mem
+
+            if mem_cannot_cast > 0:
+                print(f"[Memory Management] Loaded to GPU for backward capability: {mem_cannot_cast / (1024 * 1024):.2f} MB")
 
             swap_flag = 'Shared' if PIN_SHARED_MEMORY else 'CPU'
             method_flag = 'asynchronous' if stream.should_use_stream() else 'blocked'
@@ -424,9 +431,9 @@ class LoadedModel:
             self.model_accelerated = False
 
         if avoid_model_moving:
-            self.model.unpatch_model()
+            self.model.forge_unpatch_model()
         else:
-            self.model.unpatch_model(self.model.offload_device)
+            self.model.forge_unpatch_model(self.model.offload_device)
             self.model.model_patches_to(self.model.offload_device)
 
     def __eq__(self, other):

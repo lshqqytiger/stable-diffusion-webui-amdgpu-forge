@@ -1,12 +1,6 @@
-# Under Construction
-
-WebUI Forge is under a week of major revision right now between 2024 Aug 1 and Aug 10. To join the test, just update to the latest unstable version.
-
-**Current Progress (2024 Aug 10):** Backend Rewrite is 95.5% finished.
-
 # Stable Diffusion WebUI AMDGPU Forge
 
-Stable Diffusion WebUI AMDGPU Forge is a platform on top of [Stable Diffusion WebUI AMDGPU](https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu) (based on [Gradio](https://www.gradio.app/)) to make development easier, optimize resource management, speed up inference, and study experimental features.
+Stable Diffusion WebUI AMDGPU Forge is a platform on top of [Stable Diffusion WebUI AMDGPU](https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu) (based on [Gradio](https://www.gradio.app/) <a href='https://github.com/gradio-app/gradio'><img src='https://img.shields.io/github/stars/gradio-app/gradio'></a>) to make development easier, optimize resource management, speed up inference, and study experimental features.
 
 The name "Forge" is inspired from "Minecraft Forge". This project is aimed at becoming SD WebUI AMDGPU's Forge.
 
@@ -25,24 +19,6 @@ This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/
 If you are proficient in Git and you want to install Forge as another branch of SD-WebUI, please see [here](https://github.com/continue-revolution/sd-webui-animatediff/blob/forge/master/docs/how-to-use.md#you-have-a1111-and-you-know-git). In this way, you can reuse all SD checkpoints and all extensions you installed previously in your OG SD-WebUI, but you should know what you are doing.
 
 If you know what you are doing, you can install Forge using same method as SD-WebUI. (Install Git, Python, Git Clone the forge repo `https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu-forge.git` and then run webui-user.bat).
-
-**Or you can just use this one-click installation package (with git and python included).**
-
-[>>> Click Here to Download One-Click Package (CUDA 12.1 + Pytorch 2.3.1) <<<](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch231.7z)
-
-Some other CUDA/Torch Versions:
-
-[Forge with CUDA 12.1 + Pytorch 2.3.1](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch231.7z) <- **Recommended**
-
-[Forge with CUDA 12.4 + Pytorch 2.4](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu124_torch24.7z) <- **Fastest**, but MSVC may be broken, xformers may not work
-
-[Forge with CUDA 12.1 + Pytorch 2.1](https://github.com/lllyasviel/stable-diffusion-webui-forge/releases/download/latest/webui_forge_cu121_torch21.7z) <- the previously used old environments
-
-After you download, you uncompress, use `update.bat` to update, and use `run.bat` to run.
-
-Note that running `update.bat` is important, otherwise you may be using a previous version with potential bugs unfixed.
-
-![image](https://github.com/lllyasviel/stable-diffusion-webui-forge/assets/19834515/c49bd60d-82bd-4086-9859-88d472582b94)
 
 ### Previous Versions
 
@@ -190,4 +166,4 @@ See also [Forge's Unet Implementation](https://github.com/lllyasviel/stable-diff
 
 # Under Construction
 
-This Readme is under construction ... more docs/wiki coming soon ...
+WebUI Forge is now under some constructions, and docs / UI / functionality may change with updates.
