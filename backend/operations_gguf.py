@@ -3,10 +3,15 @@ import torch
 
 
 quants_mapping = {
+    gguf.GGMLQuantizationType.Q2_K: gguf.Q2_K,
+    gguf.GGMLQuantizationType.Q3_K: gguf.Q3_K,
     gguf.GGMLQuantizationType.Q4_0: gguf.Q4_0,
+    gguf.GGMLQuantizationType.Q4_K: gguf.Q4_K,
     gguf.GGMLQuantizationType.Q4_1: gguf.Q4_1,
     gguf.GGMLQuantizationType.Q5_0: gguf.Q5_0,
     gguf.GGMLQuantizationType.Q5_1: gguf.Q5_1,
+    gguf.GGMLQuantizationType.Q5_K: gguf.Q5_K,
+    gguf.GGMLQuantizationType.Q6_K: gguf.Q6_K,
     gguf.GGMLQuantizationType.Q8_0: gguf.Q8_0,
 }
 
@@ -37,6 +42,13 @@ class ParameterGGUF(torch.nn.Parameter):
         new.gguf_cls = self.gguf_cls
         return new
 
+    def pin_memory(self, device=None):
+        new = ParameterGGUF(torch.Tensor.pin_memory(self, device=device), no_init=True)
+        new.gguf_type = self.gguf_type
+        new.gguf_real_shape = self.gguf_real_shape
+        new.gguf_cls = self.gguf_cls
+        return new
+
     @classmethod
     def make(cls, data, gguf_type, gguf_cls, gguf_real_shape):
         new = ParameterGGUF(data, no_init=True)
@@ -46,16 +58,12 @@ class ParameterGGUF(torch.nn.Parameter):
         return new
 
 
-def functional_linear_gguf(x, weight, bias=None):
-    target_dtype = x.dtype
-    weight = dequantize_tensor(weight).to(target_dtype)
-    bias = dequantize_tensor(bias).to(target_dtype)
-    return torch.nn.functional.linear(x, weight, bias)
-
-
 def dequantize_tensor(tensor):
     if tensor is None:
         return None
+
+    if not hasattr(tensor, 'gguf_cls'):
+        return tensor
 
     data = torch.tensor(tensor.data)
     gguf_cls = tensor.gguf_cls

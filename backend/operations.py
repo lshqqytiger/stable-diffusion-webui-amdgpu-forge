@@ -4,13 +4,54 @@ import time
 import torch
 import contextlib
 
-from backend import stream, memory_management
+from backend import stream, memory_management, utils
+from backend.patcher.lora import merge_lora_to_weight
 
 
 stash = {}
 
 
-def weights_manual_cast(layer, x, skip_weight_dtype=False, skip_bias_dtype=False):
+def get_weight_and_bias(layer, weight_args=None, bias_args=None, weight_fn=None, bias_fn=None):
+    patches = getattr(layer, 'forge_online_loras', None)
+    weight_patches, bias_patches = None, None
+
+    if patches is not None:
+        weight_patches = patches.get('weight', None)
+
+    if patches is not None:
+        bias_patches = patches.get('bias', None)
+
+    weight = None
+    if layer.weight is not None:
+        weight = layer.weight
+        if weight_fn is not None:
+            if weight_args is not None:
+                fn_device = weight_args.get('device', None)
+                if fn_device is not None:
+                    weight = weight.to(device=fn_device)
+            weight = weight_fn(weight)
+        if weight_args is not None:
+            weight = weight.to(**weight_args)
+        if weight_patches is not None:
+            weight = merge_lora_to_weight(patches=weight_patches, weight=weight, key="online weight lora", computation_dtype=weight.dtype)
+
+    bias = None
+    if layer.bias is not None:
+        bias = layer.bias
+        if bias_fn is not None:
+            if bias_args is not None:
+                fn_device = bias_args.get('device', None)
+                if fn_device is not None:
+                    bias = bias.to(device=fn_device)
+            bias = bias_fn(bias)
+        if bias_args is not None:
+            bias = bias.to(**bias_args)
+        if bias_patches is not None:
+            bias = merge_lora_to_weight(patches=bias_patches, weight=bias, key="online bias lora", computation_dtype=bias.dtype)
+    return weight, bias
+
+
+def weights_manual_cast(layer, x, skip_weight_dtype=False, skip_bias_dtype=False, weight_fn=None, bias_fn=None):
     weight, bias, signal = None, None, None
     non_blocking = True
 
@@ -32,16 +73,10 @@ def weights_manual_cast(layer, x, skip_weight_dtype=False, skip_bias_dtype=False
 
     if stream.should_use_stream():
         with stream.stream_context()(stream.mover_stream):
-            if layer.weight is not None:
-                weight = layer.weight.to(**weight_args)
-            if layer.bias is not None:
-                bias = layer.bias.to(**bias_args)
+            weight, bias = get_weight_and_bias(layer, weight_args, bias_args, weight_fn=weight_fn, bias_fn=bias_fn)
             signal = stream.mover_stream.record_event()
     else:
-        if layer.weight is not None:
-            weight = layer.weight.to(**weight_args)
-        if layer.bias is not None:
-            bias = layer.bias.to(**bias_args)
+        weight, bias = get_weight_and_bias(layer, weight_args, bias_args, weight_fn=weight_fn, bias_fn=bias_fn)
 
     return weight, bias, signal
 
@@ -109,7 +144,8 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.linear(x, weight, bias)
             else:
-                return torch.nn.functional.linear(x, self.weight, self.bias)
+                weight, bias = get_weight_and_bias(self)
+                return torch.nn.functional.linear(x, weight, bias)
 
     class Conv2d(torch.nn.Conv2d):
 
@@ -128,7 +164,8 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return self._conv_forward(x, weight, bias)
             else:
-                return super().forward(x)
+                weight, bias = get_weight_and_bias(self)
+                return super()._conv_forward(x, weight, bias)
 
     class Conv3d(torch.nn.Conv3d):
 
@@ -147,7 +184,8 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return self._conv_forward(x, weight, bias)
             else:
-                return super().forward(x)
+                weight, bias = get_weight_and_bias(self)
+                return super()._conv_forward(input, weight, bias)
 
     class Conv1d(torch.nn.Conv1d):
 
@@ -166,7 +204,8 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return self._conv_forward(x, weight, bias)
             else:
-                return super().forward(x)
+                weight, bias = get_weight_and_bias(self)
+                return super()._conv_forward(input, weight, bias)
 
     class ConvTranspose2d(torch.nn.ConvTranspose2d):
 
@@ -188,7 +227,10 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
             else:
-                return super().forward(x, output_size)
+                weight, bias = get_weight_and_bias(self)
+                num_spatial_dims = 2
+                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
 
     class ConvTranspose1d(torch.nn.ConvTranspose1d):
 
@@ -210,7 +252,10 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.conv_transpose1d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
             else:
-                return super().forward(x, output_size)
+                weight, bias = get_weight_and_bias(self)
+                num_spatial_dims = 1
+                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
 
     class ConvTranspose3d(torch.nn.ConvTranspose3d):
 
@@ -232,7 +277,10 @@ class ForgeOperations:
                 with main_stream_worker(weight, bias, signal):
                     return torch.nn.functional.conv_transpose3d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
             else:
-                return super().forward(x, output_size)
+                weight, bias = get_weight_and_bias(self)
+                num_spatial_dims = 3
+                output_padding = self._output_padding(x, output_size, self.stride, self.padding, self.kernel_size, num_spatial_dims, self.dilation)
+                return torch.nn.functional.conv_transpose2d(x, weight, bias, self.stride, self.padding, output_padding, self.groups, self.dilation)
 
     class GroupNorm(torch.nn.GroupNorm):
 
@@ -294,7 +342,7 @@ class ForgeOperations:
 
 
 try:
-    from backend.operations_bnb import ForgeLoader4Bit, ForgeParams4bit, functional_linear_4bits
+    from backend.operations_bnb import ForgeLoader4Bit, ForgeParams4bit, functional_linear_4bits, functional_dequantize_4bit
 
     class ForgeOperationsBNB4bits(ForgeOperations):
         class Linear(ForgeLoader4Bit):
@@ -303,12 +351,15 @@ try:
                 self.parameters_manual_cast = current_manual_cast_enabled
 
             def forward(self, x):
-                self.weight.quant_state = self.quant_state
-
                 if self.bias is not None and self.bias.dtype != x.dtype:
                     # Maybe this can also be set to all non-bnb ops since the cost is very low.
                     # And it only invokes one time, and most linear does not have bias
-                    self.bias.data = self.bias.data.to(x.dtype)
+                    self.bias = utils.tensor2parameter(self.bias.to(x.dtype))
+
+                if hasattr(self, 'forge_online_loras'):
+                    weight, bias, signal = weights_manual_cast(self, x, weight_fn=functional_dequantize_4bit, bias_fn=None, skip_bias_dtype=True)
+                    with main_stream_worker(weight, bias, signal):
+                        return torch.nn.functional.linear(x, weight, bias)
 
                 if not self.parameters_manual_cast:
                     return functional_linear_4bits(x, self.weight, self.bias)
@@ -330,7 +381,7 @@ except:
     bnb_avaliable = False
 
 
-from backend.operations_gguf import functional_linear_gguf
+from backend.operations_gguf import dequantize_tensor
 
 
 class ForgeOperationsGGUF(ForgeOperations):
@@ -357,18 +408,21 @@ class ForgeOperationsGGUF(ForgeOperations):
 
         def _apply(self, fn, recurse=True):
             if self.weight is not None:
-                self.weight = fn(self.weight)
+                self.weight = utils.tensor2parameter(fn(self.weight))
             if self.bias is not None:
-                self.bias = fn(self.bias)
-            return super()._apply(fn, recurse=recurse)
+                self.bias = utils.tensor2parameter(fn(self.bias))
+            return self
 
         def forward(self, x):
-            if self.parameters_manual_cast:
-                weight, bias, signal = weights_manual_cast(self, x, skip_weight_dtype=True)
-                with main_stream_worker(weight, bias, signal):
-                    return functional_linear_gguf(x, weight, bias)
-            else:
-                return functional_linear_gguf(x, self.weight, self.bias)
+            if self.bias is not None and self.bias.dtype != x.dtype:
+                self.bias = utils.tensor2parameter(dequantize_tensor(self.bias).to(x.dtype))
+
+            if self.weight is not None and self.weight.dtype != x.dtype and getattr(self.weight, 'gguf_cls', None) is None:
+                self.weight = utils.tensor2parameter(self.weight.to(x.dtype))
+
+            weight, bias, signal = weights_manual_cast(self, x, weight_fn=dequantize_tensor, bias_fn=None, skip_bias_dtype=True)
+            with main_stream_worker(weight, bias, signal):
+                return torch.nn.functional.linear(x, weight, bias)
 
 
 @contextlib.contextmanager
@@ -446,3 +500,52 @@ def automatic_memory_management():
 
     print(f'Automatic Memory Management: {len(module_list)} Modules in {(end - start):.2f} seconds.')
     return
+
+
+class DynamicSwapInstaller:
+    @staticmethod
+    def _install_module(module: torch.nn.Module, target_device: torch.device):
+        original_class = module.__class__
+        module.__dict__['forge_backup_original_class'] = original_class
+
+        def hacked_get_attr(self, name: str):
+            if '_parameters' in self.__dict__:
+                _parameters = self.__dict__['_parameters']
+                if name in _parameters:
+                    p = _parameters[name]
+                    if p is None:
+                        return None
+                    if p.__class__ == torch.nn.Parameter:
+                        return torch.nn.Parameter(p.to(target_device), requires_grad=p.requires_grad)
+                    else:
+                        return p.to(target_device)
+            if '_buffers' in self.__dict__:
+                _buffers = self.__dict__['_buffers']
+                if name in _buffers:
+                    return _buffers[name].to(target_device)
+            return super(original_class, self).__getattr__(name)
+
+        module.__class__ = type('DynamicSwap_' + original_class.__name__, (original_class,), {
+            '__getattr__': hacked_get_attr,
+        })
+
+        return
+
+    @staticmethod
+    def _uninstall_module(module: torch.nn.Module):
+        if 'forge_backup_original_class' in module.__dict__:
+            module.__class__ = module.__dict__.pop('forge_backup_original_class')
+        return
+
+    @staticmethod
+    def install_model(model: torch.nn.Module, target_device: torch.device):
+        for m in model.modules():
+            DynamicSwapInstaller._install_module(m, target_device)
+        return
+
+    @staticmethod
+    def uninstall_model(model: torch.nn.Module):
+        for m in model.modules():
+            DynamicSwapInstaller._uninstall_module(m)
+        return
+

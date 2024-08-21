@@ -3,6 +3,7 @@
 import torch
 import bitsandbytes as bnb
 
+from backend import utils
 from bitsandbytes.nn.modules import Params4bit, QuantState
 from bitsandbytes.functional import dequantize_4bit
 
@@ -54,7 +55,7 @@ class ForgeParams4bit(Params4bit):
         if device is not None and device.type == "cuda" and not self.bnb_quantized:
             return self._quantize(device)
         else:
-            n = ForgeParams4bit(
+            return ForgeParams4bit(
                 torch.nn.Parameter.to(self, device=device, dtype=dtype, non_blocking=non_blocking),
                 requires_grad=self.requires_grad,
                 quant_state=copy_quant_state(self.quant_state, device),
@@ -63,10 +64,19 @@ class ForgeParams4bit(Params4bit):
                 quant_type=self.quant_type,
                 quant_storage=self.quant_storage,
                 bnb_quantized=self.bnb_quantized,
-                module=self.module
             )
-            self.module.quant_state = n.quant_state
-            return n
+
+    def pin_memory(self, device=None):
+        return ForgeParams4bit(
+            torch.Tensor.pin_memory(self, device=device),
+            requires_grad=self.requires_grad,
+            quant_state=self.quant_state,
+            blocksize=self.blocksize,
+            compress_statistics=self.compress_statistics,
+            quant_type=self.quant_type,
+            quant_storage=self.quant_storage,
+            bnb_quantized=self.bnb_quantized,
+        )
 
 
 class ForgeLoader4Bit(torch.nn.Module):
@@ -74,9 +84,15 @@ class ForgeLoader4Bit(torch.nn.Module):
         super().__init__()
         self.dummy = torch.nn.Parameter(torch.empty(1, device=device, dtype=dtype))
         self.weight = None
-        self.quant_state = None
         self.bias = None
         self.quant_type = quant_type
+
+    def _apply(self, fn, recurse=True):
+        if self.weight is not None:
+            self.weight = utils.tensor2parameter(fn(self.weight))
+        if self.bias is not None:
+            self.bias = utils.tensor2parameter(fn(self.bias))
+        return self
 
     def _save_to_state_dict(self, destination, prefix, keep_vars):
         super()._save_to_state_dict(destination, prefix, keep_vars)
@@ -97,9 +113,7 @@ class ForgeLoader4Bit(torch.nn.Module):
                 quantized_stats=quant_state_dict,
                 requires_grad=False,
                 device=self.dummy.device,
-                module=self
             )
-            self.quant_state = self.weight.quant_state
 
             if prefix + 'bias' in state_dict:
                 self.bias = torch.nn.Parameter(state_dict[prefix + 'bias'].to(self.dummy))
@@ -114,9 +128,7 @@ class ForgeLoader4Bit(torch.nn.Module):
                     blocksize=64,
                     quant_type=self.quant_type,
                     quant_storage=torch.uint8,
-                    module=self,
                 )
-                self.quant_state = self.weight.quant_state
 
             if prefix + 'bias' in state_dict:
                 self.bias = torch.nn.Parameter(state_dict[prefix + 'bias'].to(self.dummy))
@@ -133,8 +145,6 @@ class ForgeLoader4Bit(torch.nn.Module):
             blocksize=self.weight.blocksize,
             quant_type=self.weight.quant_type,
             quant_storage=self.weight.quant_storage,
-            module=self,
             bnb_quantized=False
         )
-        self.quant_state = self.weight.quant_state
         return self
