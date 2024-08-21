@@ -10,7 +10,7 @@ Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/
 
 This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and [stable-diffusion-webui-amdgpu](https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu).
 
-- `--zluda`: Use [ZLUDA](https://github.com/vosen/ZLUDA) as a torch backend.
+- `--use-zluda`: Use [ZLUDA](https://github.com/vosen/ZLUDA) as a torch backend.
 - Support ONNX Runtime. (DirectML, CUDA, CPU)
 - Support Olive model optimization. (DirectML, CUDA)
 
