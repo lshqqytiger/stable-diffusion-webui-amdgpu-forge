@@ -59,6 +59,24 @@ def unload_module():
     return
 
 
+def greedy_move_to_gpu(model, model_gpu_memory_when_using_cpu_swap):
+    mem_counter = 0
+    memory_in_swap = 0
+    for m in model.modules():
+        if hasattr(m, "weight"):
+            module_mem = memory_management.module_size(m)
+            if mem_counter + module_mem < model_gpu_memory_when_using_cpu_swap:
+                m.to(gpu)
+                mem_counter += module_mem
+            else:
+                m.to(cpu)
+                memory_in_swap += module_mem
+
+    print(f"[Memory Management] Loaded to CPU Swap: {memory_in_swap / (1024 * 1024):.2f} MB")
+    print(f"[Memory Management] Loaded to GPU: {mem_counter / (1024 * 1024):.2f} MB")
+    return
+
+
 def load_module(m):
     global module_in_gpu
 
@@ -80,6 +98,8 @@ def load_module(m):
     if ALWAYS_SWAP or estimated_remaining_memory < 0:
         print(f'Move module to SWAP: {type(m).__name__}')
         DynamicSwapInstaller.install_model(m, target_device=gpu)
+        model_gpu_memory_when_using_cpu_swap = memory_management.compute_model_gpu_memory_when_using_cpu_swap(current_free_mem, inference_memory)
+        greedy_move_to_gpu(m, model_gpu_memory_when_using_cpu_swap)
     else:
         print(f'Move module to GPU: {type(m).__name__}')
         m.to(gpu)
@@ -94,24 +114,17 @@ class GPUObject:
 
     def __enter__(self):
         self.original_init = torch.nn.Module.__init__
-        self.original_to = torch.nn.Module.to
 
         def patched_init(module, *args, **kwargs):
             self.module_list.append(module)
             return self.original_init(module, *args, **kwargs)
 
-        def patched_to(module, *args, **kwargs):
-            self.module_list.append(module)
-            return self.original_to(module, *args, **kwargs)
-
         torch.nn.Module.__init__ = patched_init
-        torch.nn.Module.to = patched_to
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         torch.nn.Module.__init__ = self.original_init
-        torch.nn.Module.to = self.original_to
-        self.module_list = set(self.module_list)
+        self.module_list = list(set(self.module_list))
         self.to(device=torch.device('cpu'))
         memory_management.soft_empty_cache()
         return
@@ -165,6 +178,29 @@ def convert_root_path():
     caller_file = os.path.abspath(caller_file)
     result = os.path.join(os.path.dirname(caller_file), 'huggingface_space_mirror')
     return result + '/'
+
+
+def download_single_file(
+    url: str,
+    *,
+    model_dir: str,
+    progress: bool = True,
+    file_name: str | None = None,
+    hash_prefix: str | None = None,
+) -> str:
+    os.makedirs(model_dir, exist_ok=True)
+    if not file_name:
+        from urllib.parse import urlparse
+        parts = urlparse(url)
+        file_name = os.path.basename(parts.path)
+    cached_file = os.path.abspath(os.path.join(model_dir, file_name))
+    if not os.path.exists(cached_file):
+        tmp_filename = cached_file + '.tmp'
+        print(f'Downloading: "{url}" to {cached_file} using temp file {tmp_filename}\n')
+        from torch.hub import download_url_to_file
+        download_url_to_file(url, tmp_filename, progress=progress, hash_prefix=hash_prefix)
+        os.replace(tmp_filename, cached_file)
+    return cached_file
 
 
 def automatically_move_to_gpu_when_forward(m: torch.nn.Module, target_model: torch.nn.Module = None):

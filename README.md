@@ -28,11 +28,17 @@ If you know what you are doing, you can install Forge using same method as SD-We
 
 [Flux Tutorial 2 (Seperated Full Models, GGUF, Technically Correct Comparison between GGUF and NF4, etc)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1050)
 
+[How to Skip" Patching LoRAs"; How to only load LoRA one time rather than each generation; How to report LoRAs that do not work](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1038)
+
 [Report Flux Performance Problems (TLDR: DO NOT set "GPU Weight" too high! Lower "GPU Weight" solves 99% problems!)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1181)
+
+[How to solve "Connection errored out" / "Press anykey to continue ..." / etc](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1474)
 
 [(Save Flux BitsandBytes UNet/Checkpoint)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1224#discussioncomment-10384104)
 
 [LayerDiffuse Transparent Image Editing](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/854)
+
+[Tell us what is missing in ControlNet Integrated](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/932)
 
 [(Policy) Soft Advertisement Removal Policy](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1286)
 
@@ -52,25 +58,27 @@ You can download previous versions [here](https://github.com/lllyasviel/stable-d
 
 Based on manual test one-by-one:
 
-| Component                                           | Status              | Last Test    |
-| --------------------------------------------------- | ------------------- | ------------ |
-| Basic Diffusion                                     | Normal              | 2024 July 27 |
-| GPU Memory Management System                        | Normal              | 2024 July 27 |
-| LoRAs                                               | Normal              | 2024 July 27 |
-| All Preprocessors                                   | Normal              | 2024 July 27 |
-| All ControlNets                                     | Normal              | 2024 July 27 |
-| All IP-Adapters                                     | Normal              | 2024 July 27 |
-| All Instant-IDs                                     | Normal              | 2024 July 27 |
-| All Reference-only Methods                          | Normal              | 2024 July 27 |
-| All Integrated Extensions                           | Normal              | 2024 July 27 |
-| Popular Extensions (Adetailer, etc)                 | Normal              | 2024 July 27 |
-| Gradio 4 UIs                                        | Normal              | 2024 July 27 |
-| Gradio 4 Forge Canvas                               | Normal              | 2024 July 27 |
-| LoRA/Checkpoint Selection UI for Gradio 4           | Normal              | 2024 July 27 |
-| Photopea/OpenposeEditor/etc for ControlNet          | Normal              | 2024 July 27 |
-| Wacom 128 level touch pressure support for Canvas   | Normal              | 2024 July 15 |
-| Microsoft Surface touch pressure support for Canvas | Broken, pending fix | 2024 July 29 |
-| txt2img and img2img API Endpoints                   | Broken, pending fix | 2024 July 29 |
+| Component                                           | Status                                      | Last Test    |
+| --------------------------------------------------- | ------------------------------------------- | ------------ |
+| Basic Diffusion                                     | Normal                                      | 2024 Aug 26  |
+| GPU Memory Management System                        | Normal                                      | 2024 Aug 26  |
+| LoRAs                                               | Normal                                      | 2024 Aug 26  |
+| All Preprocessors                                   | Normal                                      | 2024 Aug 26  |
+| All ControlNets                                     | Normal                                      | 2024 Aug 26  |
+| All IP-Adapters                                     | Normal                                      | 2024 Aug 26  |
+| All Instant-IDs                                     | Normal                                      | 2024 July 27 |
+| All Reference-only Methods                          | Normal                                      | 2024 July 27 |
+| All Integrated Extensions                           | Normal                                      | 2024 July 27 |
+| Popular Extensions (Adetailer, etc)                 | Normal                                      | 2024 July 27 |
+| Gradio 4 UIs                                        | Normal                                      | 2024 July 27 |
+| Gradio 4 Forge Canvas                               | Normal                                      | 2024 Aug 26  |
+| LoRA/Checkpoint Selection UI for Gradio 4           | Normal                                      | 2024 July 27 |
+| Photopea/OpenposeEditor/etc for ControlNet          | Normal                                      | 2024 July 27 |
+| Wacom 128 level touch pressure support for Canvas   | Normal                                      | 2024 July 15 |
+| Microsoft Surface touch pressure support for Canvas | Broken, pending fix                         | 2024 July 29 |
+| ControlNets (Union)                                 | Not implemented yet, pending implementation | 2024 Aug 26  |
+| ControlNets (Flux)                                  | Not implemented yet, pending implementation | 2024 Aug 26  |
+| API endpoints (txt2img, img2img, etc)               | Normal, but pending improved Flux support   | 2024 Aug 29  |
 
 Feel free to open issue if anything is broken and I will take a look every several days. If I do not update this "Forge Status" then it means I cannot reproduce any problem. In that case, fresh re-install should help most.
 

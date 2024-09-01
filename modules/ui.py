@@ -543,15 +543,15 @@ def create_ui():
                                 add_copy_image_controls('img2img', init_img)
 
                             with gr.TabItem('Sketch', id='img2img_sketch', elem_id="img2img_img2img_sketch_tab") as tab_sketch:
-                                sketch = ForgeCanvas(elem_id="img2img_sketch", height=512)
+                                sketch = ForgeCanvas(elem_id="img2img_sketch", height=512, scribble_color=opts.img2img_sketch_default_brush_color)
                                 add_copy_image_controls('sketch', sketch)
 
                             with gr.TabItem('Inpaint', id='inpaint', elem_id="img2img_inpaint_tab") as tab_inpaint:
-                                init_img_with_mask = ForgeCanvas(elem_id="img2maskimg", height=512, contrast_scribbles=True)
+                                init_img_with_mask = ForgeCanvas(elem_id="img2maskimg", height=512, contrast_scribbles=opts.img2img_inpaint_mask_high_contrast, scribble_color=opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha_fixed=True, scribble_softness_fixed=True)
                                 add_copy_image_controls('inpaint', init_img_with_mask)
 
                             with gr.TabItem('Inpaint sketch', id='inpaint_sketch', elem_id="img2img_inpaint_sketch_tab") as tab_inpaint_color:
-                                inpaint_color_sketch = ForgeCanvas(elem_id="inpaint_sketch", height=512)
+                                inpaint_color_sketch = ForgeCanvas(elem_id="inpaint_sketch", height=512, scribble_color=opts.img2img_inpaint_sketch_default_brush_color)
                                 add_copy_image_controls('inpaint_sketch', inpaint_color_sketch)
 
                             with gr.TabItem('Inpaint upload', id='inpaint_upload', elem_id="img2img_inpaint_upload_tab") as tab_inpaint_upload:
@@ -907,12 +907,14 @@ def create_ui():
     extensions_interface = ui_extensions.create_ui()
     interfaces += [(extensions_interface, "Extensions", "extensions")]
 
+    interface_names_without_quick_setting_bars = ["Spaces"]
+
     shared.tab_names = []
     for _interface, label, _ifid in interfaces:
         shared.tab_names.append(label)
 
     with gr.Blocks(theme=shared.gradio_theme, analytics_enabled=False, title="Stable Diffusion", head=canvas_head) as demo:
-        settings.add_quicksettings()
+        quicksettings_row = settings.add_quicksettings()
 
         parameters_copypaste.connect_paste_params_buttons()
 
@@ -932,6 +934,11 @@ def create_ui():
             loadsave.add_component(f"webui/Tabs@{tabs.elem_id}", tabs)
 
             loadsave.setup_ui()
+
+        def tab_changed(evt: gr.SelectData):
+            return gr.update(visible=evt.value not in interface_names_without_quick_setting_bars)
+
+        tabs.select(tab_changed, outputs=[quicksettings_row], show_progress=False, queue=False)
 
         if os.path.exists(os.path.join(script_path, "notification.mp3")) and shared.opts.notification_audio:
             gr.Audio(interactive=False, value=os.path.join(script_path, "notification.mp3"), elem_id="audio_notification", visible=False)

@@ -187,6 +187,9 @@ def calc_cond_uncond_batch(model, cond, uncond, x_in, timestep, model_options):
         to_batch_temp.reverse()
         to_batch = to_batch_temp[:1]
 
+        if memory_management.signal_empty_cache:
+            memory_management.soft_empty_cache()
+
         free_memory = memory_management.get_free_memory(x_in.device)
 
         if (not args.disable_gpu_warning) and x_in.device.type == 'cuda':
@@ -340,14 +343,18 @@ def sampling_function(self, denoiser_params, cond_scale, cond_composition):
         if image_cond_in.shape[0] == x.shape[0] \
                 and image_cond_in.shape[2] == x.shape[2] \
                 and image_cond_in.shape[3] == x.shape[3]:
-            for i in range(len(uncond)):
-                uncond[i]['model_conds']['c_concat'] = Condition(image_cond_in)
+            if uncond is not None:
+                for i in range(len(uncond)):
+                    uncond[i]['model_conds']['c_concat'] = Condition(image_cond_in)
             for i in range(len(cond)):
                 cond[i]['model_conds']['c_concat'] = Condition(image_cond_in)
 
     if control is not None:
-        for h in cond + uncond:
+        for h in cond:
             h['control'] = control
+        if uncond is not None:
+            for h in uncond:
+                h['control'] = control
 
     for modifier in model_options.get('conditioning_modifiers', []):
         model, x, timestep, uncond, cond, cond_scale, model_options, seed = modifier(model, x, timestep, uncond, cond, cond_scale, model_options, seed)
@@ -369,18 +376,18 @@ def sampling_prepare(unet, x):
         additional_inference_memory += unet.controlnet_linked_list.inference_memory_requirements(unet.model_dtype())
         additional_model_patchers += unet.controlnet_linked_list.get_models()
 
-    if dynamic_args.get('online_lora', False):
-        lora_memory = utils.nested_compute_size(unet.lora_loader.patches)
+    if unet.has_online_lora():
+        lora_memory = utils.nested_compute_size(unet.lora_patches, element_size=utils.dtype_to_element_size(unet.model.computation_dtype))
         additional_inference_memory += lora_memory
 
     memory_management.load_models_gpu(
         models=[unet] + additional_model_patchers,
-        memory_required=unet_inference_memory + additional_inference_memory)
+        memory_required=unet_inference_memory,
+        hard_memory_preservation=additional_inference_memory
+    )
 
-    if dynamic_args.get('online_lora', False):
-        utils.nested_move_to_device(unet.lora_loader.patches, device=unet.current_device)
-
-    unet.lora_loader.patches = {}
+    if unet.has_online_lora():
+        utils.nested_move_to_device(unet.lora_patches, device=unet.current_device, dtype=unet.model.computation_dtype)
 
     real_model = unet.model
 
@@ -393,6 +400,8 @@ def sampling_prepare(unet, x):
 
 
 def sampling_cleanup(unet):
+    if unet.has_online_lora():
+        utils.nested_move_to_device(unet.lora_patches, device=unet.offload_device)
     for cnet in unet.list_controlnets():
         cnet.cleanup()
     cleanup_cache()

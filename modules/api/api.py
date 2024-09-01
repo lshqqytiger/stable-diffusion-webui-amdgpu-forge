@@ -19,13 +19,14 @@ from secrets import compare_digest
 import modules.shared as shared
 from modules import sd_samplers, deepbooru, images, scripts, ui, postprocessing, errors, restart, shared_items, script_callbacks, infotext_utils, sd_models, sd_schedulers
 from modules.api import models
+from modules_forge import main_entry
 from modules.shared import opts
 from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img, process_images
 from modules.textual_inversion.textual_inversion import create_embedding
 from PIL import PngImagePlugin
 from modules.realesrgan_model import get_realesrgan_models
 from modules import devices
-from typing import Any
+from typing import Any, Union, get_origin, get_args
 import piexif
 import piexif.helper
 from contextlib import closing
@@ -223,7 +224,7 @@ class Api:
         self.add_api_route("/sdapi/v1/upscalers", self.get_upscalers, methods=["GET"], response_model=list[models.UpscalerItem])
         self.add_api_route("/sdapi/v1/latent-upscale-modes", self.get_latent_upscale_modes, methods=["GET"], response_model=list[models.LatentUpscalerModeItem])
         self.add_api_route("/sdapi/v1/sd-models", self.get_sd_models, methods=["GET"], response_model=list[models.SDModelItem])
-        self.add_api_route("/sdapi/v1/sd-vae", self.get_sd_vaes, methods=["GET"], response_model=list[models.SDVaeItem])
+        self.add_api_route("/sdapi/v1/sd-modules", self.get_sd_vaes_and_text_encoders, methods=["GET"], response_model=list[models.SDModuleItem])
         self.add_api_route("/sdapi/v1/hypernetworks", self.get_hypernetworks, methods=["GET"], response_model=list[models.HypernetworkItem])
         self.add_api_route("/sdapi/v1/face-restorers", self.get_face_restorers, methods=["GET"], response_model=list[models.FaceRestorerItem])
         self.add_api_route("/sdapi/v1/realesrgan-models", self.get_realesrgan_models, methods=["GET"], response_model=list[models.RealesrganItem])
@@ -371,13 +372,24 @@ class Api:
         set_fields = request.model_dump(exclude_unset=True) if hasattr(request, "request") else request.dict(exclude_unset=True)  # pydantic v1/v2 have different names for this
         params = infotext_utils.parse_generation_parameters(request.infotext)
 
+        def get_base_type(annotation):
+            origin = get_origin(annotation)
+            
+            if origin is Union:             # represents Optional
+                args = get_args(annotation) # filter out NoneType
+                non_none_args = [arg for arg in args if arg is not type(None)]
+                if len(non_none_args) == 1: # annotation was Optional[X]
+                    return non_none_args[0]
+
+            return annotation
+
         def get_field_value(field, params):
             value = field.function(params) if field.function else params.get(field.label)
             if value is None:
                 return None
 
             if field.api in request.__fields__:
-                target_type = request.__fields__[field.api].type_
+                target_type = get_base_type(request.__fields__[field.api].annotation) # extract type from Optional[X]
             else:
                 target_type = type(field.component.value)
 
@@ -679,7 +691,8 @@ class Api:
         for k, v in req.items():
             shared.opts.set(k, v, is_api=True)
 
-        shared.opts.save(shared.config_filename)
+        main_entry.checkpoint_change(checkpoint_name)
+        # shared.opts.save(shared.config_filename) --- applied in checkpoint_change()
         return
 
     def get_cmd_flags(self):
@@ -721,11 +734,11 @@ class Api:
 
     def get_sd_models(self):
         import modules.sd_models as sd_models
-        return [{"title": x.title, "model_name": x.model_name, "hash": x.shorthash, "sha256": x.sha256, "filename": x.filename} for x in sd_models.checkpoints_list.values()]
+        return [{"title": x.title, "model_name": x.model_name, "hash": x.shorthash, "sha256": x.sha256, "filename": x.filename, "config": getattr(x, 'config', None)} for x in sd_models.checkpoints_list.values()]
 
-    def get_sd_vaes(self):
-        import modules.sd_vae as sd_vae
-        return [{"model_name": x, "filename": sd_vae.vae_dict[x]} for x in sd_vae.vae_dict.keys()]
+    def get_sd_vaes_and_text_encoders(self):
+        from modules_forge.main_entry import module_list
+        return [{"model_name": x, "filename": module_list[x]} for x in module_list.keys()]
 
     def get_hypernetworks(self):
         return [{"name": name, "path": shared.hypernetworks[name]} for name in shared.hypernetworks]
