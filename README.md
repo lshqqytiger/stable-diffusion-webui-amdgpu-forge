@@ -6,6 +6,10 @@ The name "Forge" is inspired from "Minecraft Forge". This project is aimed at be
 
 Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/AUTOMATIC1111/stable-diffusion-webui/commit/82a973c04367123ae98bd9abdf80d9eda9b910e2). (Because original SD-WebUI is almost static now, Forge will sync with original WebUI every 90 days, or when important fixes.)
 
+# News
+
+2024 Sep 7: New sampler `Flux Realistic` is available now! Recommended scheduler is "simple".
+
 # What's different from original forge?
 
 This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and [stable-diffusion-webui-amdgpu](https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu).
@@ -13,12 +17,6 @@ This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/
 - `--use-zluda`: Use [ZLUDA](https://github.com/vosen/ZLUDA) as a torch backend.
 - Support ONNX Runtime. (DirectML, CUDA, CPU)
 - Support Olive model optimization. (DirectML, CUDA)
-
-# Installing Forge
-
-If you are proficient in Git and you want to install Forge as another branch of SD-WebUI, please see [here](https://github.com/continue-revolution/sd-webui-animatediff/blob/forge/master/docs/how-to-use.md#you-have-a1111-and-you-know-git). In this way, you can reuse all SD checkpoints and all extensions you installed previously in your OG SD-WebUI, but you should know what you are doing.
-
-If you know what you are doing, you can install Forge using same method as SD-WebUI. (Install Git, Python, Git Clone the forge repo `https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu-forge.git` and then run webui-user.bat).
 
 # Quick List
 
@@ -28,7 +26,9 @@ If you know what you are doing, you can install Forge using same method as SD-We
 
 [Flux Tutorial 2 (Seperated Full Models, GGUF, Technically Correct Comparison between GGUF and NF4, etc)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1050)
 
-[How to Skip" Patching LoRAs"; How to only load LoRA one time rather than each generation; How to report LoRAs that do not work](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1038)
+[Forge Extension List and Extension Replacement List (Temporary)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1754)
+
+[How to make LoRAs more precise on low-bit models; How to Skip" Patching LoRAs"; How to only load LoRA one time rather than each generation; How to report LoRAs that do not work](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1038)
 
 [Report Flux Performance Problems (TLDR: DO NOT set "GPU Weight" too high! Lower "GPU Weight" solves 99% problems!)](https://github.com/lllyasviel/stable-diffusion-webui-forge/discussions/1181)
 
@@ -79,6 +79,7 @@ Based on manual test one-by-one:
 | ControlNets (Union)                                 | Not implemented yet, pending implementation | 2024 Aug 26  |
 | ControlNets (Flux)                                  | Not implemented yet, pending implementation | 2024 Aug 26  |
 | API endpoints (txt2img, img2img, etc)               | Normal, but pending improved Flux support   | 2024 Aug 29  |
+| OFT LoRAs                                           | Broken, pending fix                         | 2024 Sep 9   |
 
 Feel free to open issue if anything is broken and I will take a look every several days. If I do not update this "Forge Status" then it means I cannot reproduce any problem. In that case, fresh re-install should help most.
 

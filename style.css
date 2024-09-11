@@ -444,8 +444,13 @@ div.toprow-compact-tools{
 }
 
 #quicksettings > div.model_selection input{
-    width: 85% !important; /* Ensure the input field is never chopped off */
     margin-left: 2% !important; /* override the margin set for subdued */
+    width: 100%;
+}
+
+#quicksettings .icon-wrap {
+    margin-right: -4% !important;
+    background-color: var(--background-fill-secondary);
 }
 
 #quicksettings > div.model_selection li{
@@ -769,6 +774,7 @@ table.popup-table .link{
     top: 0px;
     left: 0px;
     border: 2px solid red;
+    margin: -2px;
     background: rgba(255, 0, 0, 0.3);
     z-index: 900;
     pointer-events: none;

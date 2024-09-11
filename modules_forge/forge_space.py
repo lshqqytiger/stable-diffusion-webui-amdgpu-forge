@@ -131,20 +131,17 @@ class ForgeSpace:
     def install(self):
         os.makedirs(self.hf_path, exist_ok=True)
 
-        if self.repo_id is None:
-            return self.refresh_gradio()
-
-        downloaded = snapshot_download(
-            repo_id=self.repo_id,
-            repo_type=self.repo_type,
-            revision=self.revision,
-            local_dir=self.hf_path,
-            force_download=True,
-            allow_patterns=self.allow_patterns,
-            ignore_patterns=self.ignore_patterns
-        )
-
-        print(f'Downloaded: {downloaded}')
+        if self.repo_id is not None:
+            downloaded = snapshot_download(
+                repo_id=self.repo_id,
+                repo_type=self.repo_type,
+                revision=self.revision,
+                local_dir=self.hf_path,
+                force_download=True,
+                allow_patterns=self.allow_patterns,
+                ignore_patterns=self.ignore_patterns
+            )
+            print(f'Downloaded: {downloaded}')
 
         requirements_filename = os.path.abspath(os.path.realpath(os.path.join(self.root_path, 'requirements.txt')))
 
