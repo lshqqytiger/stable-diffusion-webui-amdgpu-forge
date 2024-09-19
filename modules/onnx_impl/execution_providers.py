@@ -31,17 +31,7 @@ TORCH_DEVICE_TO_EP = {
 
 
 def get_default_execution_provider() -> ExecutionProvider:
-    if devices.backend == "cpu":
-        return ExecutionProvider.CPU
-    elif devices.backend == "directml":
-        return ExecutionProvider.DirectML
-    elif devices.backend == "cuda":
-        return ExecutionProvider.CUDA
-    elif devices.backend == "rocm":
-        return ExecutionProvider.ROCm
-    elif devices.backend == "ipex" or devices.backend == "openvino":
-        return ExecutionProvider.OpenVINO
-    return ExecutionProvider.CPU
+    return available_execution_providers[0]
 
 
 def get_execution_provider_options():

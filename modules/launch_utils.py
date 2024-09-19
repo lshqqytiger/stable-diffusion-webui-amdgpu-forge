@@ -605,9 +605,6 @@ def prepare_environment():
         print("Exiting because of --exit argument")
         exit(0)
 
-    from modules import devices
-    devices.backend = backend
-
 def configure_for_tests():
     if "--api" not in sys.argv:
         sys.argv.append("--api")

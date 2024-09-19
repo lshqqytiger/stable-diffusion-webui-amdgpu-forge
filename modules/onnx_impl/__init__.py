@@ -205,11 +205,11 @@ def initialize_onnx():
     global initialized # pylint: disable=global-statement
     if initialized:
         return
-    from modules import devices
+    from modules import rocm
     from modules.shared import opts
     try: # may fail on onnx import
         from .execution_providers import ExecutionProvider, TORCH_DEVICE_TO_EP, available_execution_providers
-        if devices.backend == "rocm":
+        if rocm.is_installed:
             TORCH_DEVICE_TO_EP["cuda"] = ExecutionProvider.ROCm
         from .pipelines.onnx_stable_diffusion_pipeline import OnnxStableDiffusionPipeline
         from .pipelines.onnx_stable_diffusion_img2img_pipeline import OnnxStableDiffusionImg2ImgPipeline

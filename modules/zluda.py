@@ -64,5 +64,4 @@ def initialize_zluda():
             print(f'ZLUDA device failed to pass basic operation test: index={device.index}, device_name={torch.cuda.get_device_name(device)}')
             print(result)
             torch.cuda.is_available = lambda: False
-            devices.backend = 'cpu'
             devices.device = devices.device_esrgan = devices.device_gfpgan = devices.device_interrogate = devices.cpu
