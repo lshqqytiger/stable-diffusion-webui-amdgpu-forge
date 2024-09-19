@@ -31,7 +31,7 @@ TORCH_DEVICE_TO_EP = {
 
 
 def get_default_execution_provider() -> ExecutionProvider:
-    return available_execution_providers[0]
+    return ExecutionProvider.CPU
 
 
 def get_execution_provider_options():
