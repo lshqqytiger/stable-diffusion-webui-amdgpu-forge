@@ -3,6 +3,7 @@ import sys
 import ctypes
 import shutil
 import subprocess
+import importlib.metadata
 from typing import Union, List
 
 
@@ -79,6 +80,17 @@ class Agent:
         #elif self.is_navi1x:
         #    return "10.3.0" # maybe?
         return None
+
+
+def get_version_torch() -> Union[str, None]:
+    version_ = None
+    try:
+        version_ = importlib.metadata.version("torch")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    if "+rocm" not in version_: # unofficial build, non-rocm torch.
+        return None
+    return version_.split("+rocm")[1]
 
 
 if sys.platform == "win32":
@@ -161,6 +173,8 @@ else:
         try:
             # Preload stdc++ library. This will ignore Anaconda stdc++ library.
             load_library_global("/lib/x86_64-linux-gnu/libstdc++.so.6")
+            # Use tcmalloc if possible.
+            load_library_global("/usr/lib/x86_64-linux-gnu/libtcmalloc_minimal.so.4")
         except OSError:
             pass
         # Preload HSA Runtime library.
@@ -173,10 +187,14 @@ else:
         else:
             os.environ["TORCH_BLAS_PREFER_HIPBLASLT"] = "0"
 
-    is_wsl: bool = os.environ.get('WSL_DISTRO_NAME', None) is not None
+    def get_blaslt_enabled() -> bool:
+        return bool(int(os.environ.get("TORCH_BLAS_PREFER_HIPBLASLT", "1")))
+
+    is_wsl: bool = os.environ.get('WSL_DISTRO_NAME', 'unknown' if spawn('wslpath -w /') else None) is not None
 path = find()
 is_installed = False
 version = None
+version_torch = get_version_torch()
 if path is not None:
     is_installed = True
     version = get_version()
