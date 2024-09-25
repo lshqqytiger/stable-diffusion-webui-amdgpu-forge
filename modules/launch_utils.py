@@ -492,9 +492,16 @@ def prepare_environment():
             try:
                 zluda_installer.load(zluda_path)
                 print(f'Using ZLUDA in {zluda_path}')
+                agents = rocm.get_agents()
+                default_agent = None
+                if len(agents) == 0:
+                    print('WARNING: no ROCm agent was found!')
+                else:
+                    default_agent = agents[0]
+                    print(f'ROCm agents: {[agent.name for agent in agents]}, using {default_agent.name}')
                 torch_command = os.environ.get(
                     "TORCH_COMMAND",
-                    f"pip install torch=={zluda_installer.get_default_torch_version(rocm.get_agents()[int(os.environ.get('HIP_VISIBLE_DEVICES', '0').split(',')[0])])} torchvision --index-url https://download.pytorch.org/whl/cu118",
+                    f"pip install torch=={zluda_installer.get_default_torch_version(default_agent)} torchvision --index-url https://download.pytorch.org/whl/cu118",
                 )
             except Exception as e:
                 error = e
