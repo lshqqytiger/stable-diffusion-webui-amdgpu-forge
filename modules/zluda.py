@@ -12,14 +12,6 @@ PLATFORM = sys.platform
 do_nothing = lambda _: None # pylint: disable=unnecessary-lambda-assignment
 
 
-def is_zluda(device: DeviceLikeType):
-    try:
-        device = torch.device(device)
-        return torch.cuda.get_device_name(device).endswith("[ZLUDA]")
-    except Exception:
-        return False
-
-
 def test(device: DeviceLikeType) -> Union[Exception, None]:
     device = torch.device(device)
     try:
@@ -33,8 +25,9 @@ def test(device: DeviceLikeType) -> Union[Exception, None]:
 
 
 def initialize_zluda():
+    shared.cmd_opts.device_id = None
     device = devices.get_optimal_device()
-    if not torch.cuda.is_available() or not is_zluda(device):
+    if not devices.has_zluda():
         return
 
     do_hijack()
@@ -64,4 +57,5 @@ def initialize_zluda():
             print(f'ZLUDA device failed to pass basic operation test: index={device.index}, device_name={torch.cuda.get_device_name(device)}')
             print(result)
             torch.cuda.is_available = lambda: False
+            devices.backend = 'cpu'
             devices.device = devices.device_esrgan = devices.device_gfpgan = devices.device_interrogate = devices.cpu

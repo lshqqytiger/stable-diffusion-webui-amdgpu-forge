@@ -362,6 +362,8 @@ def requirements_met(requirements_file):
 
 
 def prepare_environment():
+    from modules import rocm
+
     system = platform.system()
     nvidia_driver_found = False
     backend = "cuda"
@@ -417,14 +419,11 @@ def prepare_environment():
                 f"pip install torch==2.3.1 torchvision --extra-index-url {torch_index_url}",
             )
         else:
-            from modules import rocm
             if rocm.is_installed:
                 if system == "Windows": # ZLUDA
                     args.use_zluda = True
-                    print(f"ROCm Toolkit {rocm.version} was found.")
                     backend = "cuda"
                 else:
-                    print(f"ROCm Toolkit {rocm.version} was found.")
                     backend = "rocm"
                     torch_index_url = os.environ.get(
                         "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.0"
@@ -475,39 +474,71 @@ def prepare_environment():
     print(f"Version: {tag}")
     print(f"Commit hash: {commit}")
 
-    if args.use_zluda:
-        error = None
-        from modules import zluda_installer, rocm
+    if args.use_zluda or backend == "rocm":
+        device = None
         try:
-            zluda_path = zluda_installer.get_path()
-            zluda_installer.install(zluda_path)
-            zluda_installer.make_copy(zluda_path)
+            amd_gpus = rocm.get_agents()
+            if len(amd_gpus) == 0:
+                print('ROCm: no agent was found')
+            else:
+                print(f'ROCm: agents={[gpu.name for gpu in amd_gpus]}')
+                if args.device_id is None:
+                    index = 0
+                    for idx, gpu in enumerate(amd_gpus):
+                        index = idx
+                        if not gpu.is_apu:
+                            # although apu was found, there can be a dedicated card. do not break loop.
+                            # if no dedicated card was found, apu will be used.
+                            break
+                    os.environ.setdefault('HIP_VISIBLE_DEVICES', str(index))
+                    device = amd_gpus[index]
+                else:
+                    device_id = int(args.device_id)
+                    if device_id < len(amd_gpus):
+                        device = amd_gpus[device_id]
         except Exception as e:
-            error = e
-            print(f'Failed to install ZLUDA: {e}')
-        if error is None:
+            print(f'ROCm agent enumerator failed: {e}')
+
+        msg = f'ROCm: version={rocm.version}'
+        if device is not None:
+            msg += f', using agent {device.name}'
+        print(msg)
+
+        if system == "Windows":
             if args.device_id is not None:
+                if os.environ.get('HIP_VISIBLE_DEVICES', None) is not None:
+                    print('Setting HIP_VISIBLE_DEVICES and --device-id at the same time may be mistake.')
                 os.environ['HIP_VISIBLE_DEVICES'] = args.device_id
                 del args.device_id
+
+            print("ZLUDA support: experimental")
+            error = None
+            from modules import zluda_installer
+            zluda_installer.set_default_agent(device)
             try:
-                zluda_installer.load(zluda_path)
-                print(f'Using ZLUDA in {zluda_path}')
-                torch_command = os.environ.get(
-                    "TORCH_COMMAND",
-                    f"pip install torch=={zluda_installer.get_default_torch_version(rocm.get_agents()[int(os.environ.get('HIP_VISIBLE_DEVICES', '0').split(',')[0])])} torchvision --index-url https://download.pytorch.org/whl/cu118",
-                )
+                zluda_path = zluda_installer.get_path()
+                zluda_installer.install(zluda_path)
+                zluda_installer.make_copy(zluda_path)
             except Exception as e:
                 error = e
-                print(f'Failed to load ZLUDA: {e}')
-        if error is not None:
-            print('Using CPU-only torch')
+                print(f'Failed to install ZLUDA: {e}')
+            if error is None:
+                try:
+                    zluda_installer.load(zluda_path)
+                    torch_command = os.environ.get('TORCH_COMMAND', f'pip install torch=={zluda_installer.get_default_torch_version(device)} torchvision --index-url https://download.pytorch.org/whl/cu118')
+                    print(f'Using ZLUDA in {zluda_path}')
+                except Exception as e:
+                    error = e
+                    print(f'Failed to load ZLUDA: {e}')
+            if error is not None:
+                print('Using CPU-only torch')
+                torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
 
     if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
 
     if backend == "rocm":
-        from modules import rocm
         if rocm.is_wsl:
             rocm.load_hsa_runtime()
         rocm.set_blaslt_enabled(False)

@@ -4,7 +4,7 @@ import ctypes
 import shutil
 import zipfile
 import urllib.request
-from typing import Optional
+from typing import Optional, Union
 from modules import rocm
 
 
@@ -15,10 +15,16 @@ DLL_MAPPING = {
 }
 HIPSDK_TARGETS = ['rocblas.dll', 'rocsolver.dll', f'hiprtc{"".join([v.zfill(2) for v in rocm.version.split(".")])}.dll']
 ZLUDA_TARGETS = ('nvcuda.dll', 'nvml.dll',)
+default_agent: Union[rocm.Agent, None] = None
 
 
 def get_path() -> str:
     return os.path.abspath(os.environ.get('ZLUDA', '.zluda'))
+
+
+def set_default_agent(agent: rocm.Agent):
+    global default_agent # pylint: disable=global-statement
+    default_agent = agent
 
 
 def install(zluda_path: os.PathLike) -> None:
@@ -76,8 +82,8 @@ def load(zluda_path: os.PathLike) -> None:
 
 def get_default_torch_version(agent: Optional[rocm.Agent]) -> str:
     if agent is not None:
-        if agent.is_navi3x or agent.is_navi2x or agent.is_navi1x:
+        if agent.arch in (rocm.MicroArchitecture.RDNA, rocm.MicroArchitecture.CDNA,):
             return "2.3.1"
-        elif agent.is_gcn:
+        elif agent.arch == rocm.MicroArchitecture.GCN:
             return "2.2.1"
     return "2.3.1"
