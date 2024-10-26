@@ -50,16 +50,46 @@ function setupExtraNetworksForTab(tabname) {
 
         var applyFilter = function(force) {
             var searchTerm = search.value.toLowerCase();
+
+            // get UI preset
+            radioUI = gradioApp().querySelector('#forge_ui_preset');
+            radioButtons = radioUI.getElementsByTagName('input');
+            UIresult = 3;   //  default to 'all'
+            for (i = 0; i < radioButtons.length; i++) {
+                if (radioButtons[i].checked) {
+                    UIresult = i;
+                }
+            }
+
             gradioApp().querySelectorAll('#' + tabname + '_extra_tabs div.card').forEach(function(elem) {
                 var searchOnly = elem.querySelector('.search_only');
                 var text = Array.prototype.map.call(elem.querySelectorAll('.search_terms, .description'), function(t) {
                     return t.textContent.toLowerCase();
                 }).join(" ");
 
-                var visible = text.indexOf(searchTerm) != -1;
-                if (searchOnly && searchTerm.length < 4) {
-                    visible = false;
+                var visible = true;
+                if (searchOnly && searchTerm.length < 4)    visible = false;
+
+                splitSearch = searchTerm.split(" ");
+                splitSearch.forEach(function(partial) {
+                    if (text.indexOf(partial) == -1)        visible = false;
+                })
+
+                sdversion = elem.getAttribute('data-sort-sdversion');
+                if (sdversion == null) ;
+                else if (sdversion == 'SdVersion.Unknown')  ;
+                else if (opts.lora_filter_disabled == True) ;
+                else if (UIresult == 3) ;   //  'all'
+                else if (UIresult == 0) {   //  'sd'
+                    if (sdversion != 'SdVersion.SD1' && sdversion != 'SdVersion.SD2')   visible = false;
                 }
+                else if (UIresult == 1) {   //  'xl'
+                    if (sdversion != 'SdVersion.SDXL')  visible = false;
+                }
+                else if (UIresult == 2) {   //  'flux'
+                    if (sdversion != 'SdVersion.Flux')  visible = false;
+                }
+                
                 if (visible) {
                     elem.classList.remove("hidden");
                 } else {
@@ -69,6 +99,7 @@ function setupExtraNetworksForTab(tabname) {
 
             applySort(force);
         };
+
 
         var applySort = function(force) {
             var cards = gradioApp().querySelectorAll('#' + tabname_full + ' div.card');
@@ -113,6 +144,7 @@ function setupExtraNetworksForTab(tabname) {
         });
         applySort();
         applyFilter();
+
         extraNetworksApplySort[tabname_full] = applySort;
         extraNetworksApplyFilter[tabname_full] = applyFilter;
 
@@ -449,6 +481,19 @@ function extraNetworksControlTreeViewOnClick(event, tabname, extra_networks_tabn
     pane.classList.toggle("extra-network-dirs-hidden", show);
 }
 
+function clickLoraRefresh() {
+    const targets = ['txt2img_lora', 'txt2img_checkpoints', 'txt2img_textural_inversion', 'img2img_lora', 'img2img_checkpoints', 'img2img_textural_inversion'];
+    targets.forEach(function(t) {
+        const tab = gradioApp().getElementById(t + '-button');
+        if (tab && tab.getAttribute('aria-selected') == "true") {
+            const applyFunction = extraNetworksApplyFilter[t];
+            if (applyFunction) {
+                applyFunction(true);
+            }
+        }
+    });
+}
+
 function extraNetworksControlRefreshOnClick(event, tabname, extra_networks_tabname) {
     /**
      * Handles `onclick` events for the Refresh Page button.
@@ -616,6 +661,9 @@ function extraNetworksRequestMetadata(event, extraPage) {
     };
 
     var cardName = event.target.parentElement.parentElement.getAttribute("data-name");
+    if (cardName == null) { // from tree
+        cardName = event.target.parentElement.parentElement.parentElement.getAttribute("data-name");
+    }
 
     requestGet("./sd_extra_networks/metadata", {page: extraPage, item: cardName}, function(data) {
         if (data && data.metadata) {
@@ -643,6 +691,9 @@ function extraNetworksEditUserMetadata(event, tabname, extraPage) {
     }
 
     var cardName = event.target.parentElement.parentElement.getAttribute("data-name");
+    if (cardName == null) { // from tree
+        cardName = event.target.parentElement.parentElement.parentElement.getAttribute("data-name");
+    }
     editor.nameTextarea.value = cardName;
     updateInput(editor.nameTextarea);
 
