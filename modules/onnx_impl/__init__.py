@@ -189,8 +189,8 @@ def preprocess_pipeline(p):
     return shared.sd_model
 
 
-def ORTDiffusionModelPart_to(self, *args, **kwargs):
-    self.parent_model = self.parent_model.to(*args, **kwargs)
+def ORTDiffusionModelPart_to(self: optimum.onnxruntime.modeling_diffusion.ORTPipelinePart, *args, **kwargs):
+    self.parent_pipeline = self.parent_pipeline.to(*args, **kwargs)
     return self
 
 
@@ -205,11 +205,11 @@ def initialize_onnx():
     global initialized # pylint: disable=global-statement
     if initialized:
         return
-    from modules import rocm
+    from modules import devices
     from modules.shared import opts
     try: # may fail on onnx import
         from .execution_providers import ExecutionProvider, TORCH_DEVICE_TO_EP, available_execution_providers
-        if rocm.is_installed:
+        if devices.backend == "rocm":
             TORCH_DEVICE_TO_EP["cuda"] = ExecutionProvider.ROCm
         from .pipelines.onnx_stable_diffusion_pipeline import OnnxStableDiffusionPipeline
         from .pipelines.onnx_stable_diffusion_img2img_pipeline import OnnxStableDiffusionImg2ImgPipeline
@@ -241,7 +241,7 @@ def initialize_onnx():
         diffusers.ORTStableDiffusionXLPipeline = diffusers.OnnxStableDiffusionXLPipeline # Huggingface model compatibility
         diffusers.ORTStableDiffusionXLImg2ImgPipeline = diffusers.OnnxStableDiffusionXLImg2ImgPipeline
 
-        optimum.onnxruntime.modeling_diffusion._ORTDiffusionModelPart.to = ORTDiffusionModelPart_to # pylint: disable=protected-access
+        optimum.onnxruntime.modeling_diffusion.ORTPipelinePart.to = ORTDiffusionModelPart_to # pylint: disable=protected-access
 
         fastapi_encoders.jsonable_encoder = jsonable_encoder
 
