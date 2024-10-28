@@ -189,7 +189,7 @@ def preprocess_pipeline(p):
     return shared.sd_model
 
 
-def ORTDiffusionModelPart_to(self: optimum.onnxruntime.modeling_diffusion.ORTPipelinePart, *args, **kwargs):
+def ORTDiffusionModelPart_to(self, *args, **kwargs):
     self.parent_pipeline = self.parent_pipeline.to(*args, **kwargs)
     return self
 
