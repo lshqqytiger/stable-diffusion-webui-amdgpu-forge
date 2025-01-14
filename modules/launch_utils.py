@@ -516,32 +516,31 @@ def prepare_environment():
             from modules import zluda_installer
             zluda_installer.set_default_agent(device)
             try:
-                zluda_path = zluda_installer.get_path()
-                zluda_installer.install(zluda_path)
-                zluda_installer.make_copy(zluda_path)
+                zluda_installer.install()
             except Exception as e:
                 error = e
                 print(f'Failed to install ZLUDA: {e}')
             if error is None:
                 try:
-                    zluda_installer.load(zluda_path)
+                    if device is not None and zluda_installer.get_blaslt_enabled():
+                        print(f'ROCm hipBLASLt: arch={device.name} available={device.blaslt_supported}')
+                        zluda_installer.set_blaslt_enabled(device.blaslt_supported)
+                    zluda_installer.make_copy()
+                    zluda_installer.load()
                     torch_command = os.environ.get('TORCH_COMMAND', f'pip install torch=={zluda_installer.get_default_torch_version(device)} torchvision --index-url https://download.pytorch.org/whl/cu118')
-                    print(f'Using ZLUDA in {zluda_path}')
+                    print(f'Using ZLUDA in {zluda_installer.path}')
                 except Exception as e:
                     error = e
                     print(f'Failed to load ZLUDA: {e}')
             if error is not None:
                 print('Using CPU-only torch')
                 torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
+        else:
+            rocm.set_blaslt_enabled(False)
 
     if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
         startup_timer.record("install torch")
-
-    if backend == "rocm":
-        if rocm.is_wsl:
-            rocm.load_hsa_runtime()
-        rocm.set_blaslt_enabled(False)
 
     if args.use_ipex or args.directml or args.use_zluda or args.use_cpu_torch:
         args.skip_torch_cuda_test = True

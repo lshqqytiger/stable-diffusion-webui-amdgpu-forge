@@ -50,8 +50,6 @@ def initialize_zluda():
         if shared.opts.onnx_execution_provider == ExecutionProvider.CUDA:
             shared.opts.onnx_execution_provider = ExecutionProvider.CPU
 
-        devices.device_codeformer = devices.cpu
-
         result = test(device)
         if result is not None:
             print(f'ZLUDA device failed to pass basic operation test: index={device.index}, device_name={torch.cuda.get_device_name(device)}')
