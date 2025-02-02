@@ -8,13 +8,36 @@ Forge is currently based on SD-WebUI 1.10.1 at [this commit](https://github.com/
 
 News are moved to this link: [Click here to see the News section](https://github.com/lllyasviel/stable-diffusion-webui-forge/blob/main/NEWS.md)
 
-# What's different from original forge?
+## What's different from original forge?
 
 This is a merge of [stable-diffusion-webui-forge](https://github.com/lllyasviel/stable-diffusion-webui-forge) and [stable-diffusion-webui-amdgpu](https://github.com/lshqqytiger/stable-diffusion-webui-amdgpu).
 
-- `--use-zluda`: Use [ZLUDA](https://github.com/vosen/ZLUDA) as a torch backend.
-- Support ONNX Runtime. (DirectML, CUDA, CPU)
-- Support Olive model optimization. (DirectML, CUDA)
+**[DirectML](https://github.com/microsoft/DirectML)** support for every GPUs that support DirectX 12 API.
+
+**[ZLUDA](https://github.com/vosen/ZLUDA)** support for AMDGPUs.
+
+- `--use-directml`: Use DirectML as a torch backend.
+- `--use-zluda`: Use ZLUDA as a torch backend.
+- Support [ONNX Runtime](https://github.com/microsoft/onnxruntime).
+- Support [Olive](https://github.com/microsoft/Olive) model optimization.
+
+## Installation and Running
+
+### Using DirectML
+
+DirectML is available for every gpu that supports DirectX 12.
+
+If you are using one of recent AMDGPUs, ZLUDA is more recommended.
+
+Start WebUI with `--use-directml`.
+
+### Using ZLUDA
+
+Most of AMDGPUs are compatible.
+
+Start WebUI with `--use-zluda`.
+
+Visit [detailed guide](https://github.com/vladmandic/automatic/wiki/ZLUDA) for details.
 
 # Quick List
 
