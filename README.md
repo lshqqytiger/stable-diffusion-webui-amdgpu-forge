@@ -37,7 +37,8 @@ Most of AMDGPUs are compatible.
 
 Start WebUI with `--use-zluda`.
 
-Visit [detailed guide](https://github.com/vladmandic/automatic/wiki/ZLUDA) for details.
+Visit [SD.Next ZLUDA installation guide](https://github.com/vladmandic/sdnext/wiki/ZLUDA) for details.  
+(Everything is same except for which repository you clone. You'll clone this repository instead of SD.Next if you want to use the original Stable diffusion WebUI)
 
 # Quick List
 
