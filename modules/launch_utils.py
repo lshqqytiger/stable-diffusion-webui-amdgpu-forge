@@ -514,11 +514,11 @@ def prepare_environment():
             print("ZLUDA support: experimental")
             error = None
             from modules import zluda_installer
-            zluda_installer.set_default_agent(device)
             try:
-                if zluda_installer.is_old_zluda():
+                if zluda_installer.is_reinstall_needed():
                     zluda_installer.uninstall()
                 zluda_installer.install()
+                zluda_installer.set_default_agent(device)
             except Exception as e:
                 error = e
                 print(f'Failed to install ZLUDA: {e}')
@@ -529,7 +529,7 @@ def prepare_environment():
                         zluda_installer.set_blaslt_enabled(device.blaslt_supported)
                     zluda_installer.make_copy()
                     zluda_installer.load()
-                    torch_command = os.environ.get('TORCH_COMMAND', f'pip install torch=={zluda_installer.get_default_torch_version(device)} torchvision --index-url https://download.pytorch.org/whl/cu118')
+                    torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
                     print(f'Using ZLUDA in {zluda_installer.path}')
                 except Exception as e:
                     error = e
@@ -537,8 +537,6 @@ def prepare_environment():
             if error is not None:
                 print('Using CPU-only torch')
                 torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch torchvision')
-        else:
-            rocm.set_blaslt_enabled(False)
 
     if args.reinstall_torch or not is_installed("torch") or not is_installed("torchvision"):
         run(f'"{python}" -m {torch_command}', "Installing torch and torchvision", "Couldn't install torch", live=True)
