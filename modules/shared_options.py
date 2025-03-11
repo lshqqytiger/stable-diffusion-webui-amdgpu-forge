@@ -192,10 +192,10 @@ options_templates.update(options_section(('sd', "Stable Diffusion", "sd"), {
 }))
 
 options_templates.update(options_section(('sdxl', "Stable Diffusion XL", "sd"), {
-    "sdxl_crop_top": OptionInfo(0, "crop top coordinate"),
-    "sdxl_crop_left": OptionInfo(0, "crop left coordinate"),
-    "sdxl_refiner_low_aesthetic_score": OptionInfo(2.5, "SDXL low aesthetic score", gr.Number).info("used for refiner model negative prompt"),
-    "sdxl_refiner_high_aesthetic_score": OptionInfo(6.0, "SDXL high aesthetic score", gr.Number).info("used for refiner model prompt"),
+    "sdxl_crop_top": OptionInfo(0, "crop top coordinate", gr.Number, {"minimum": 0, "maximum": 1024, "step": 1}),
+    "sdxl_crop_left": OptionInfo(0, "crop left coordinate", gr.Number, {"minimum": 0, "maximum": 1024, "step": 1}),
+    "sdxl_refiner_low_aesthetic_score": OptionInfo(2.5, "SDXL low aesthetic score", gr.Slider, {"minimum": 0, "maximum": 10, "step": 0.1}).info("used for refiner model negative prompt"),
+    "sdxl_refiner_high_aesthetic_score": OptionInfo(6.0, "SDXL high aesthetic score", gr.Slider, {"minimum": 0, "maximum": 10, "step": 0.1}).info("used for refiner model prompt"),
 }))
 
 options_templates.update(options_section(('sd3', "Stable Diffusion 3", "sd"), {
@@ -379,6 +379,7 @@ Infotext is what this software calls the text that contains generation parameter
 It is displayed in UI below the image. To use infotext, paste it into the prompt and click the ↙️ paste button.
 """),
     "enable_pnginfo": OptionInfo(True, "Write infotext to metadata of the generated image"),
+    "stealth_pnginfo_option": OptionInfo("Alpha", "Stealth infotext mode", gr.Radio, {"choices": ["Alpha", "RGB", "None"]}).info("Ignored if infotext is disabled"),
     "save_txt": OptionInfo(False, "Create a text file with infotext next to every generated image"),
 
     "add_model_name_to_info": OptionInfo(True, "Add model name to infotext"),
