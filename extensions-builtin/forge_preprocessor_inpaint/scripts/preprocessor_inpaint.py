@@ -43,8 +43,6 @@ class PreprocessorInpaintOnly(PreprocessorInpaint):
         self.mask = mask
 
         vae = process.sd_model.forge_objects.vae
-        # This is a powerful VAE with integrated memory management, bf16, and tiled fallback.
-
         latent_image = vae.encode(self.image.movedim(1, -1))
         latent_image = process.sd_model.forge_objects.vae.first_stage_model.process_in(latent_image)
 
@@ -56,17 +54,21 @@ class PreprocessorInpaintOnly(PreprocessorInpaint):
 
         unet = process.sd_model.forge_objects.unet.clone()
 
-        def pre_cfg(model, c, uc, x, timestep, model_options):
+        def pre_cfg(args):
+            x = args['input']
+            timestep = args['timestep']
             noisy_latent = latent_image.to(x) + timestep[:, None, None, None].to(x) * torch.randn_like(latent_image).to(x)
             x = x * latent_mask.to(x) + noisy_latent.to(x) * (1.0 - latent_mask.to(x))
-            return model, c, uc, x, timestep, model_options
+            args['input'] = x
+
+            return args['conds_out']
 
         def post_cfg(args):
             denoised = args['denoised']
             denoised = denoised * latent_mask.to(denoised) + latent_image.to(denoised) * (1.0 - latent_mask.to(denoised))
             return denoised
 
-        unet.add_sampler_pre_cfg_function(pre_cfg)
+        unet.set_model_sampler_pre_cfg_function(pre_cfg)
         unet.set_model_sampler_post_cfg_function(post_cfg)
 
         process.sd_model.forge_objects.unet = unet
@@ -139,6 +141,12 @@ class PreprocessorInpaintLama(PreprocessorInpaintOnly):
             image_feed = einops.rearrange(image_feed, 'h w c -> 1 c h w')
             prd_color = self.model_patcher.model(image_feed)[0]
             prd_color = einops.rearrange(prd_color, 'c h w -> h w c')
+            
+            # Ensure all tensors are on the same device
+            device = prd_color.device
+            mask = mask.to(device)
+            color = color.to(device)
+            
             prd_color = prd_color * mask + color * (1 - mask)
             prd_color *= 255.0
             prd_color = prd_color.detach().cpu().numpy().clip(0, 255).astype(np.uint8)
@@ -159,9 +167,53 @@ class PreprocessorInpaintLama(PreprocessorInpaintOnly):
         process.modified_noise = original_noise + self.latent.to(original_noise) / sigma_max.to(original_noise)
         return cond, mask
 
+class PreprocessorInpaintNoobAIXL(Preprocessor):
+    def __init__(self):
+        super().__init__()
+        self.name = 'inpaint_noobai_xl'
+        self.tags = ['Inpaint']
+        self.model_filename_filters = ['inpaint', 'noobai']
+        self.slider_resolution = PreprocessorParameter(visible=False)
+        self.fill_mask_with_one_when_resize_and_fill = True
+        self.expand_mask_when_resize_and_fill = True
+
+    def __call__(self, input_image, resolution=512, slider_1=None, slider_2=None, slider_3=None, input_mask=None, **kwargs):
+        if input_mask is None:
+            return input_image
+            
+        if not isinstance(input_image, np.ndarray):
+            input_image = np.array(input_image)
+        if not isinstance(input_mask, np.ndarray):
+            input_mask = np.array(input_mask)
+            
+        mask = input_mask.astype(np.float32) / 255.0
+        mask = (mask > 0.5).astype(np.float32)
+            
+        # Create a copy of the input image
+        result = input_image.copy()
+        
+        # Convert mask to proper shape if needed
+        if mask.ndim == 2:
+            mask = np.expand_dims(mask, axis=-1)
+        if mask.shape[-1] == 1:
+            mask = np.repeat(mask, 3, axis=-1)
+            
+        mask_indices = mask > 0.5
+        result[mask_indices] = 0.0
+        
+        return result
+        
+    def process_before_every_sampling(self, process, cond, mask, *args, **kwargs):
+        mask = mask.round()
+        mixed_cond = cond.clone()
+        mixed_cond = mixed_cond * (1.0 - mask)
+        
+        return mixed_cond, None
 
 add_supported_preprocessor(PreprocessorInpaint())
 
 add_supported_preprocessor(PreprocessorInpaintOnly())
 
 add_supported_preprocessor(PreprocessorInpaintLama())
+
+add_supported_preprocessor(PreprocessorInpaintNoobAIXL())

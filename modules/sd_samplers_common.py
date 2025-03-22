@@ -5,10 +5,12 @@ import torch
 from PIL import Image
 from modules import devices, images, sd_vae_approx, sd_samplers, sd_vae_taesd, shared, sd_models
 from modules.shared import opts, state
-from backend.sampling.sampling_function import sampling_prepare, sampling_cleanup
+from modules_forge.forge_sampler import sampling_prepare, sampling_cleanup
 from modules import extra_networks
-import k_diffusion.sampling
-from modules_forge import main_entry
+if opts.sd_sampling == "A1111":
+    from k_diffusion import sampling
+elif opts.sd_sampling == "ldm patched (Comfy)":
+    from ldm_patched.k_diffusion import sampling as sampling
 
 SamplerDataTuple = namedtuple('SamplerData', ['name', 'constructor', 'aliases', 'options'])
 
@@ -47,18 +49,10 @@ def samples_to_images_tensor(sample, approximation=None, model=None):
     if approximation == 2:
         x_sample = sd_vae_approx.cheap_approximation(sample)
     elif approximation == 1:
-        m = sd_vae_approx.model()
-        if m is None:
-            x_sample = sd_vae_approx.cheap_approximation(sample)
-        else:
-            x_sample = m(sample.to(devices.device, devices.dtype)).detach()
+        x_sample = sd_vae_approx.model()(sample.to(devices.device, devices.dtype)).detach()
     elif approximation == 3:
-        m = sd_vae_taesd.decoder_model()
-        if m is None:
-            x_sample = sd_vae_approx.cheap_approximation(sample)
-        else:
-            x_sample = m(sample.to(devices.device, devices.dtype)).detach()
-            x_sample = x_sample * 2 - 1
+        x_sample = sd_vae_taesd.decoder_model()(sample.to(devices.device, devices.dtype)).detach()
+        x_sample = x_sample * 2 - 1
     else:
         if model is None:
             model = shared.sd_model
@@ -160,50 +154,54 @@ def replace_torchsde_browinan():
 replace_torchsde_browinan()
 
 
-def apply_refiner(cfg_denoiser, x):
-    completed_ratio = cfg_denoiser.step / cfg_denoiser.total_steps
+def apply_refiner(cfg_denoiser, x, sigma=None):
+    if opts.refiner_switch_by_sample_steps or sigma is None:
+        completed_ratio = cfg_denoiser.step / cfg_denoiser.total_steps
+    else:
+        # Ensure sigma is on the same device as cfg_denoiser.inner_model.sigmas
+        device = cfg_denoiser.inner_model.sigmas.device
+        sigma = sigma.to(device)
+        
+        try:
+            timestep = torch.argmin(torch.abs(cfg_denoiser.inner_model.sigmas - torch.max(sigma)))
+        except AttributeError:  # for samplers that don't use sigmas (DDIM) sigma is actually the timestep
+            timestep = torch.max(sigma).to(dtype=int)
+        completed_ratio = (999 - timestep) / 1000
     refiner_switch_at = cfg_denoiser.p.refiner_switch_at
     refiner_checkpoint_info = cfg_denoiser.p.refiner_checkpoint_info
-    
+
     if refiner_switch_at is not None and completed_ratio < refiner_switch_at:
         return False
-    
+
     if refiner_checkpoint_info is None or shared.sd_model.sd_checkpoint_info == refiner_checkpoint_info:
         return False
-    
+
     if getattr(cfg_denoiser.p, "enable_hr", False):
         is_second_pass = cfg_denoiser.p.is_hr_pass
-    
+
         if opts.hires_fix_refiner_pass == "first pass" and is_second_pass:
             return False
-    
+
         if opts.hires_fix_refiner_pass == "second pass" and not is_second_pass:
             return False
-    
+
         if opts.hires_fix_refiner_pass != "second pass":
             cfg_denoiser.p.extra_generation_params['Hires refiner'] = opts.hires_fix_refiner_pass
-    
+
     cfg_denoiser.p.extra_generation_params['Refiner'] = refiner_checkpoint_info.short_title
     cfg_denoiser.p.extra_generation_params['Refiner switch at'] = refiner_switch_at
-    
+
     sampling_cleanup(sd_models.model_data.get_sd_model().forge_objects.unet)
-    
+
     with sd_models.SkipWritingToConfig():
-        fp_checkpoint = getattr(shared.opts, 'sd_model_checkpoint')
-        checkpoint_changed = main_entry.checkpoint_change(refiner_checkpoint_info.short_title, save=False, refresh=False)
-        if checkpoint_changed:
-            try:
-                main_entry.refresh_model_loading_parameters()
-                sd_models.forge_model_reload()
-            finally:
-                main_entry.checkpoint_change(fp_checkpoint, save=False, refresh=True)
-    
+        sd_models.reload_model_weights(info=refiner_checkpoint_info)
+
     if not cfg_denoiser.p.disable_extra_networks:
         extra_networks.activate(cfg_denoiser.p, cfg_denoiser.p.extra_network_data)
-    
+
     cfg_denoiser.p.setup_conds()
     cfg_denoiser.update_inner_model()
-    
+
     sampling_prepare(sd_models.model_data.get_sd_model().forge_objects.unet, x=x)
     return True
 
@@ -243,16 +241,19 @@ class Sampler:
         self.config: SamplerData = None  # set by the function calling the constructor
         self.last_latent = None
         self.s_min_uncond = None
+        # Default values for sampler parameters
         self.s_churn = 0.0
         self.s_tmin = 0.0
         self.s_tmax = float('inf')
         self.s_noise = 1.0
+        self.dpmpp_sde_r = 0.5
+        self.dpmpp_2m_sde_solver = 'midpoint'
 
         self.eta_option_field = 'eta_ancestral'
         self.eta_infotext_field = 'Eta'
         self.eta_default = 1.0
 
-        self.conditioning_key = 'crossattn'
+        self.conditioning_key = getattr(shared.sd_model.model, 'conditioning_key', 'crossattn')
 
         self.p = None
         self.model_wrap_cfg = None
@@ -260,6 +261,9 @@ class Sampler:
         self.options = {}
 
     def callback_state(self, d):
+        if self.p is not None and self.p.scripts is not None:
+            self.p.scripts.process_before_every_step(p=self.p, d=d)
+
         step = d['i']
 
         if self.stop_at is not None and step > self.stop_at:
@@ -299,23 +303,37 @@ class Sampler:
         self.eta = p.eta if p.eta is not None else getattr(opts, self.eta_option_field, 0.0)
         self.s_min_uncond = getattr(p, 's_min_uncond', 0.0)
 
-        k_diffusion.sampling.torch = TorchHijack(p)
+        sampling.torch = TorchHijack(p)
 
         extra_params_kwargs = {}
         for param_name in self.extra_params:
             if hasattr(p, param_name) and param_name in inspect.signature(self.func).parameters:
                 extra_params_kwargs[param_name] = getattr(p, param_name)
 
+        # Handle eta parameter
         if 'eta' in inspect.signature(self.func).parameters:
             if self.eta != self.eta_default:
                 p.extra_generation_params[self.eta_infotext_field] = self.eta
-
             extra_params_kwargs['eta'] = self.eta
 
+        # Handle special parameters for DPM++ samplers
+        if self.funcname == 'sample_dpmpp_sde':
+            r = getattr(opts, 'dpmpp_sde_r', self.dpmpp_sde_r)
+            if r != self.dpmpp_sde_r:
+                extra_params_kwargs['r'] = r
+                p.extra_generation_params['DPM++ SDE r'] = r
+
+        if self.funcname == 'sample_dpmpp_2m_sde':
+            solver_type = getattr(opts, 'dpmpp_2m_sde_solver', self.dpmpp_2m_sde_solver)
+            if solver_type != self.dpmpp_2m_sde_solver:
+                extra_params_kwargs['solver_type'] = solver_type
+                p.extra_generation_params['DPM++ 2M solver'] = solver_type
+
+        # Handle standard sigma parameters
         if len(self.extra_params) > 0:
             s_churn = getattr(opts, 's_churn', p.s_churn)
             s_tmin = getattr(opts, 's_tmin', p.s_tmin)
-            s_tmax = getattr(opts, 's_tmax', p.s_tmax) or self.s_tmax # 0 = inf
+            s_tmax = getattr(opts, 's_tmax', p.s_tmax) or self.s_tmax  # 0 = inf
             s_noise = getattr(opts, 's_noise', p.s_noise)
 
             if 's_churn' in extra_params_kwargs and s_churn != self.s_churn:
@@ -342,7 +360,10 @@ class Sampler:
         if shared.opts.no_dpmpp_sde_batch_determinism:
             return None
 
-        from k_diffusion.sampling import BrownianTreeNoiseSampler
+        if opts.sd_sampling == "A1111":
+            from k_diffusion.sampling import BrownianTreeNoiseSampler
+        elif opts.sd_sampling == "ldm patched (Comfy)":
+            from ldm_patched.k_diffusion.sampling import BrownianTreeNoiseSampler
         sigma_min, sigma_max = sigmas[sigmas > 0].min(), sigmas.max()
         current_iter_seeds = p.all_seeds[p.iteration * p.batch_size:(p.iteration + 1) * p.batch_size]
         return BrownianTreeNoiseSampler(x, sigma_min, sigma_max, seed=current_iter_seeds)

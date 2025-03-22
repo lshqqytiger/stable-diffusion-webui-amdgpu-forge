@@ -1,8 +1,14 @@
 import torch
+from modules.shared import opts
 
-from k_diffusion import utils, sampling
-from k_diffusion.external import DiscreteEpsDDPMDenoiser
-from k_diffusion.sampling import default_noise_sampler, trange
+if opts.sd_sampling == "A1111":
+    from k_diffusion import utils, sampling
+    from k_diffusion.external import DiscreteEpsDDPMDenoiser
+    from k_diffusion.sampling import default_noise_sampler, trange
+elif opts.sd_sampling == "ldm patched (Comfy)":
+    from ldm_patched.k_diffusion import utils, sampling
+    from ldm_patched.k_diffusion.external import DiscreteEpsDDPMDenoiser
+    from ldm_patched.k_diffusion.sampling import default_noise_sampler, trange
 
 from modules import shared, sd_samplers_cfg_denoiser, sd_samplers_kdiffusion, sd_samplers_common
 

@@ -1,14 +1,22 @@
 import torch
 import inspect
-import k_diffusion.sampling
-import k_diffusion.external
 from modules import sd_samplers_common, sd_samplers_extra, sd_samplers_cfg_denoiser, sd_schedulers, devices
 from modules.sd_samplers_cfg_denoiser import CFGDenoiser  # noqa: F401
 from modules.script_callbacks import ExtraNoiseParams, extra_noise_callback
+import modules.sd_samplers_kdiffusion_smea as sd_samplers_kdiffusion_smea
 
 from modules.shared import opts
 import modules.shared as shared
 from backend.sampling.sampling_function import sampling_prepare, sampling_cleanup
+
+if opts.sd_sampling == "A1111":
+    import k_diffusion
+    from k_diffusion import sampling
+    from k_diffusion.external import CompVisDenoiser, CompVisVDenoiser
+elif opts.sd_sampling == "ldm patched (Comfy)":
+    import ldm_patched.k_diffusion
+    from ldm_patched.k_diffusion import sampling
+    from ldm_patched.k_diffusion.external import CompVisDenoiser, CompVisVDenoiser
 
 
 samplers_k_diffusion = [
@@ -33,24 +41,40 @@ samplers_k_diffusion = [
     ('DEIS', 'sample_deis', ['deis'], {}),
 ]
 
+additional_samplers = [
+    ('Euler Dy', 'sample_euler_dy', ['k_euler_dy'], {}),
+    ('Euler SMEA Dy', 'sample_euler_smea_dy', ['k_euler_smea_dy'], {}),
+    ('Euler Negative', 'sample_euler_negative', ['k_euler_negative'], {}),
+    ('Euler Negative Dy', 'sample_euler_dy_negative', ['k_euler_dy_negative'], {}),
+    # ('Kohaku_LoNyu_Yog', 'sample_Kohaku_LoNyu_Yog', ['k_euler_dy_negative'], {}),
+]
+samplers_k_diffusion.extend(additional_samplers)
 
 samplers_data_k_diffusion = [
     sd_samplers_common.SamplerData(label, lambda model, funcname=funcname: KDiffusionSampler(funcname, model), aliases, options)
     for label, funcname, aliases, options in samplers_k_diffusion
-    if callable(funcname) or hasattr(k_diffusion.sampling, funcname)
+    if callable(funcname) or hasattr(sampling, funcname) or hasattr(sd_samplers_kdiffusion_smea, funcname)
 ]
 
 sampler_extra_params = {
     'sample_euler': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
+    'sample_euler_ancestral': ['eta', 's_noise'],
     'sample_heun': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
     'sample_dpm_2': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
     'sample_dpm_fast': ['s_noise'],
     'sample_dpm_2_ancestral': ['s_noise'],
-    'sample_dpmpp_2s_ancestral': ['s_noise'],
-    'sample_dpmpp_sde': ['s_noise'],
-    'sample_dpmpp_2m_sde': ['s_noise'],
-    'sample_dpmpp_3m_sde': ['s_noise'],
+    'sample_dpmpp_2s_ancestral': ['eta', 's_noise'],
+    'sample_dpmpp_sde': ['eta', 's_noise', 'r'],
+    'sample_dpmpp_2m_sde': ['eta', 's_noise', 'solver_type'],
+    'sample_dpmpp_3m_sde': ['eta', 's_noise'],
 }
+
+sampler_extra_params.update({
+    'sample_euler_dy': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
+    'sample_euler_smea_dy': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
+    'sample_euler_negative': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
+    'sample_euler_dy_negative': ['s_churn', 's_tmin', 's_tmax', 's_noise'],
+})
 
 k_diffusion_samplers_map = {x.name: x for x in samplers_data_k_diffusion}
 k_diffusion_scheduler = {x.name: x.function for x in sd_schedulers.schedulers}
@@ -60,20 +84,57 @@ class CFGDenoiserKDiffusion(sd_samplers_cfg_denoiser.CFGDenoiser):
     @property
     def inner_model(self):
         if self.model_wrap is None:
-            self.model_wrap = k_diffusion.external.ForgeScheduleLinker(shared.sd_model.forge_objects.unet.model.predictor)
-            self.model_wrap.inner_model = shared.sd_model
+            denoiser_constructor = getattr(shared.sd_model, 'create_denoiser', None)
+
+            if denoiser_constructor is not None:
+                self.model_wrap = denoiser_constructor()
+            else:
+                denoiser = CompVisVDenoiser if shared.sd_model.parameterization == "v" else CompVisDenoiser
+                self.model_wrap = denoiser(shared.sd_model, quantize=shared.opts.enable_quantization)
 
         return self.model_wrap
+
+    @property
+    def latent_image(self):
+        return getattr(self, '_latent_image', None)
+
+    @latent_image.setter
+    def latent_image(self, value):
+        self._latent_image = value
+
+    @latent_image.deleter
+    def latent_image(self):
+        if hasattr(self, '_latent_image'):
+            del self._latent_image
+
+    @property
+    def noise(self):
+        return getattr(self, '_noise', None)
+
+    @noise.setter
+    def noise(self, value):
+        self._noise = value
+
+    @noise.deleter
+    def noise(self):
+        if hasattr(self, '_noise'):
+            del self._noise
 
 
 class KDiffusionSampler(sd_samplers_common.Sampler):
     def __init__(self, funcname, sd_model, options=None):
         super().__init__(funcname)
-
         self.extra_params = sampler_extra_params.get(funcname, [])
-
+        
         self.options = options or {}
-        self.func = funcname if callable(funcname) else getattr(k_diffusion.sampling, self.funcname)
+        if callable(funcname):
+            self.func = funcname
+        elif hasattr(sampling, funcname):
+            self.func = getattr(sampling, funcname)
+        elif hasattr(sd_samplers_kdiffusion_smea, funcname):
+            self.func = getattr(sd_samplers_kdiffusion_smea, funcname)
+        else:
+            raise ValueError(f"Sampler {funcname} not found in k_diffusion.sampling or sd_samplers_kdiffusion_smea")
 
         self.model_wrap_cfg = CFGDenoiserKDiffusion(self)
         self.model_wrap = self.model_wrap_cfg.inner_model
@@ -104,13 +165,13 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
 
             if scheduler.label != 'Automatic' and not p.is_hr_pass:
                 p.extra_generation_params["Schedule type"] = scheduler.label
+
             elif scheduler.label != p.extra_generation_params.get("Schedule type"):
                 p.extra_generation_params["Hires schedule type"] = scheduler.label
 
             if opts.sigma_min != 0 and opts.sigma_min != m_sigma_min:
                 sigmas_kwargs['sigma_min'] = opts.sigma_min
                 p.extra_generation_params["Schedule min sigma"] = opts.sigma_min
-
             if opts.sigma_max != 0 and opts.sigma_max != m_sigma_max:
                 sigmas_kwargs['sigma_max'] = opts.sigma_max
                 p.extra_generation_params["Schedule max sigma"] = opts.sigma_max
@@ -126,7 +187,7 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
                 p.extra_generation_params["Beta schedule alpha"] = opts.beta_dist_alpha
                 p.extra_generation_params["Beta schedule beta"] = opts.beta_dist_beta
 
-            sigmas = scheduler.function(n=steps, **sigmas_kwargs, device=devices.cpu)
+            sigmas = scheduler.function(n=steps, **sigmas_kwargs, device=shared.device)
 
         if discard_next_to_last_sigma:
             sigmas = torch.cat([sigmas[:-2], sigmas[-1:]])
@@ -172,8 +233,11 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
             noise_sampler = self.create_noise_sampler(x, sigmas, p)
             extra_params_kwargs['noise_sampler'] = noise_sampler
 
-        if self.config.options.get('solver_type', None) == 'heun':
-            extra_params_kwargs['solver_type'] = 'heun'
+        if opts.sd_sampling == "A1111":
+            if self.config.options.get('solver_type', None) == 'heun':
+                extra_params_kwargs['solver_type'] = 'heun'
+        else:
+            pass
 
         self.model_wrap_cfg.init_latent = x
         if shared.cmd_opts.directml:
@@ -225,8 +289,11 @@ class KDiffusionSampler(sd_samplers_common.Sampler):
             noise_sampler = self.create_noise_sampler(x, sigmas, p)
             extra_params_kwargs['noise_sampler'] = noise_sampler
 
-        if self.config.options.get('solver_type', None) == 'heun':
-            extra_params_kwargs['solver_type'] = 'heun'
+        if opts.sd_sampling == "A1111":
+            if self.config.options.get('solver_type', None) == 'heun':
+                extra_params_kwargs['solver_type'] = 'heun'
+        else:
+            pass
 
         self.last_latent = x
         self.sampler_extra_args = {

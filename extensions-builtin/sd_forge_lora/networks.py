@@ -1,56 +1,19 @@
 from __future__ import annotations
-
+import gradio as gr
+import logging
 import os
 import re
-import torch
-import network
+
+import lora_patches
 import functools
+import network
 
-from backend.args import dynamic_args
+import torch
+from typing import Union
+
 from modules import shared, sd_models, errors, scripts
-from backend.utils import load_torch_file
-from backend.patcher.lora import model_lora_keys_clip, model_lora_keys_unet, load_lora
-
-
-def load_lora_for_models(model, clip, lora, strength_model, strength_clip, filename='default', online_mode=False):
-    model_flag = type(model.model).__name__ if model is not None else 'default'
-
-    unet_keys = model_lora_keys_unet(model.model) if model is not None else {}
-    clip_keys = model_lora_keys_clip(clip.cond_stage_model) if clip is not None else {}
-
-    lora_unmatch = lora
-    lora_unet, lora_unmatch = load_lora(lora_unmatch, unet_keys)
-    lora_clip, lora_unmatch = load_lora(lora_unmatch, clip_keys)
-
-    if len(lora_unmatch) > 12:
-        print(f'[LORA] LoRA version mismatch for {model_flag}: {filename}')
-        return model, clip
-
-    if len(lora_unmatch) > 0:
-        print(f'[LORA] Loading {filename} for {model_flag} with unmatched keys {list(lora_unmatch.keys())}')
-
-    new_model = model.clone() if model is not None else None
-    new_clip = clip.clone() if clip is not None else None
-
-    if new_model is not None and len(lora_unet) > 0:
-        loaded_keys = new_model.add_patches(filename=filename, patches=lora_unet, strength_patch=strength_model, online_mode=online_mode)
-        skipped_keys = [item for item in lora_unet if item not in loaded_keys]
-        if len(skipped_keys) > 12:
-            print(f'[LORA] Mismatch {filename} for {model_flag}-UNet with {len(skipped_keys)} keys mismatched in {len(loaded_keys)} keys')
-        else:
-            print(f'[LORA] Loaded {filename} for {model_flag}-UNet with {len(loaded_keys)} keys at weight {strength_model} (skipped {len(skipped_keys)} keys) with on_the_fly = {online_mode}')
-            model = new_model
-
-    if new_clip is not None and len(lora_clip) > 0:
-        loaded_keys = new_clip.add_patches(filename=filename, patches=lora_clip, strength_patch=strength_clip, online_mode=online_mode)
-        skipped_keys = [item for item in lora_clip if item not in loaded_keys]
-        if len(skipped_keys) > 12:
-            print(f'[LORA] Mismatch {filename} for {model_flag}-CLIP with {len(skipped_keys)} keys mismatched in {len(loaded_keys)} keys')
-        else:
-            print(f'[LORA] Loaded {filename} for {model_flag}-CLIP with {len(loaded_keys)} keys at weight {strength_clip} (skipped {len(skipped_keys)} keys) with on_the_fly = {online_mode}')
-            clip = new_clip
-
-    return model, clip
+from ldm_patched.modules.utils import load_torch_file
+from ldm_patched.modules.sd import load_lora_for_models
 
 
 @functools.lru_cache(maxsize=5)
@@ -58,11 +21,31 @@ def load_lora_state_dict(filename):
     return load_torch_file(filename, safe_load=True)
 
 
+def convert_diffusers_name_to_compvis(key, is_sd2):
+    pass
+
+
+def assign_network_names_to_compvis_modules(sd_model):
+    pass
+
+
+class BundledTIHash(str):
+    def __init__(self, hash_str):
+        self.hash = hash_str
+
+    def __str__(self):
+        return self.hash if shared.opts.lora_bundled_ti_to_infotext else ''
+
+
 def load_network(name, network_on_disk):
     net = network.Network(name, network_on_disk)
     net.mtime = os.path.getmtime(network_on_disk.filename)
 
     return net
+
+
+def purge_networks_from_memory():
+    pass
 
 
 def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=None):
@@ -99,14 +82,9 @@ def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=No
         network_on_disk.read_hash()
         loaded_networks.append(net)
 
-    online_mode = dynamic_args.get('online_lora', False)
-
-    if current_sd.forge_objects.unet.model.storage_dtype in [torch.float32, torch.float16, torch.bfloat16]:
-        online_mode = False
-
     compiled_lora_targets = []
     for a, b, c in zip(networks_on_disk, unet_multipliers, te_multipliers):
-        compiled_lora_targets.append([a.filename, b, c, online_mode])
+        compiled_lora_targets.append([a.filename, b, c])
 
     compiled_lora_targets_hash = str(compiled_lora_targets)
 
@@ -117,14 +95,92 @@ def load_networks(names, te_multipliers=None, unet_multipliers=None, dyn_dims=No
     current_sd.forge_objects.unet = current_sd.forge_objects_original.unet
     current_sd.forge_objects.clip = current_sd.forge_objects_original.clip
 
-    for filename, strength_model, strength_clip, online_mode in compiled_lora_targets:
+    for filename, strength_model, strength_clip in compiled_lora_targets:
         lora_sd = load_lora_state_dict(filename)
         current_sd.forge_objects.unet, current_sd.forge_objects.clip = load_lora_for_models(
             current_sd.forge_objects.unet, current_sd.forge_objects.clip, lora_sd, strength_model, strength_clip,
-            filename=filename, online_mode=online_mode)
+            filename=filename)
 
     current_sd.forge_objects_after_applying_lora = current_sd.forge_objects.shallow_copy()
     return
+
+
+def allowed_layer_without_weight(layer):
+    if isinstance(layer, torch.nn.LayerNorm) and not layer.elementwise_affine:
+        return True
+
+    return False
+
+
+def store_weights_backup(weight):
+    if weight is None:
+        return None
+
+    return weight.to(devices.cpu, copy=True)
+
+
+def restore_weights_backup(obj, field, weight):
+    if weight is None:
+        setattr(obj, field, None)
+        return
+
+    getattr(obj, field).copy_(weight)
+
+
+def network_restore_weights_from_backup(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention]):
+    pass
+
+
+def network_apply_weights(self: Union[torch.nn.Conv2d, torch.nn.Linear, torch.nn.GroupNorm, torch.nn.LayerNorm, torch.nn.MultiheadAttention]):
+    pass
+
+
+def network_forward(org_module, input, original_forward):
+    pass
+
+
+def network_reset_cached_weight(self: Union[torch.nn.Conv2d, torch.nn.Linear]):
+    pass
+
+
+def network_Linear_forward(self, input):
+    pass
+
+
+def network_Linear_load_state_dict(self, *args, **kwargs):
+    pass
+
+
+def network_Conv2d_forward(self, input):
+    pass
+
+
+def network_Conv2d_load_state_dict(self, *args, **kwargs):
+    pass
+
+
+def network_GroupNorm_forward(self, input):
+    pass
+
+
+def network_GroupNorm_load_state_dict(self, *args, **kwargs):
+    pass
+
+
+def network_LayerNorm_forward(self, input):
+    pass
+
+
+def network_LayerNorm_load_state_dict(self, *args, **kwargs):
+    pass
+
+
+def network_MultiheadAttention_forward(self, *args, **kwargs):
+    pass
+
+
+def network_MultiheadAttention_load_state_dict(self, *args, **kwargs):
+    pass
 
 
 def process_network_files(names: list[str] | None = None):
@@ -200,6 +256,8 @@ def infotext_pasted(infotext, params):
     if added:
         params["Prompt"] += "\n" + "".join(added)
 
+
+originals: lora_patches.LoraPatches = None
 
 extra_network_lora = None
 

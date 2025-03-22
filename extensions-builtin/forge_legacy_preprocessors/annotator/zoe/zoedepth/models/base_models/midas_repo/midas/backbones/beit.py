@@ -17,7 +17,7 @@ def forward_beit(pretrained, x):
 
 def patch_embed_forward(self, x):
     """
-    Modification of timm.models.layers.patch_embed.py: PatchEmbed.forward to support arbitrary window sizes.
+    Modification of timm.layers.patch_embed.py: PatchEmbed.forward to support arbitrary window sizes.
     """
     x = self.proj(x)
     if self.flatten:

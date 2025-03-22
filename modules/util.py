@@ -212,7 +212,6 @@ Requested path was: {path}
     else:
         subprocess.Popen(["xdg-open", path])
 
-
 def load_file_from_url(
     url: str,
     *,
@@ -224,7 +223,6 @@ def load_file_from_url(
 ) -> str:
     """Download a file from `url` into `model_dir`, using the file present if possible.
     Returns the path to the downloaded file.
-
     file_name: if specified, it will be used as the filename, otherwise the filename will be extracted from the url.
         file is downloaded to {file_name}.tmp then moved to the final location after download is complete.
     hash_prefix: sha256 hex string, if provided, the hash of the downloaded file will be checked against this prefix.
@@ -233,14 +231,22 @@ def load_file_from_url(
     """
     from urllib.parse import urlparse
     import requests
-    from tqdm import tqdm
-
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        class tqdm:
+            def __init__(self, *args, **kwargs):
+                pass
+            def update(self, n=1, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                pass
     if not file_name:
         parts = urlparse(url)
         file_name = os.path.basename(parts.path)
-
     cached_file = os.path.abspath(os.path.join(model_dir, file_name))
-
     if re_download or not os.path.exists(cached_file):
         os.makedirs(model_dir, exist_ok=True)
         temp_file = os.path.join(model_dir, f"{file_name}.tmp")
@@ -254,22 +260,17 @@ def load_file_from_url(
                     if chunk:
                         file.write(chunk)
                         progress_bar.update(len(chunk))
-
         if hash_prefix and not compare_sha256(temp_file, hash_prefix):
             print(f"Hash mismatch for {temp_file}. Deleting the temporary file.")
             os.remove(temp_file)
             raise ValueError(f"File hash does not match the expected hash prefix {hash_prefix}!")
-
         os.rename(temp_file, cached_file)
     return cached_file
-
-
 def compare_sha256(file_path: str, hash_prefix: str) -> bool:
     """Check if the SHA256 hash of the file matches the given prefix."""
     import hashlib
     hash_sha256 = hashlib.sha256()
     blksize = 1024 * 1024
-
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(blksize), b""):
             hash_sha256.update(chunk)

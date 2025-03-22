@@ -1,8 +1,7 @@
 import os
 import importlib.util
+import subprocess
 
-
-# https://github.com/comfyanonymous/ComfyUI/blob/master/cuda_malloc.py
 def get_gpu_names():
     if os.name == 'nt':
         import ctypes
@@ -34,17 +33,23 @@ def get_gpu_names():
             return gpu_names
         return enum_display_devices()
     else:
-        return set()
-
+        gpu_names = set()
+        try:
+            out = subprocess.check_output(['nvidia-smi', '-L'])
+            for l in out.split(b'\n'):
+                if len(l) > 0:
+                    gpu_names.add(l.decode('utf-8').split(' (UUID')[0])
+        except:
+            pass
+        return gpu_names
 
 blacklist = {"GeForce GTX TITAN X", "GeForce GTX 980", "GeForce GTX 970", "GeForce GTX 960", "GeForce GTX 950", "GeForce 945M",
                 "GeForce 940M", "GeForce 930M", "GeForce 920M", "GeForce 910M", "GeForce GTX 750", "GeForce GTX 745", "Quadro K620",
                 "Quadro K1200", "Quadro K2200", "Quadro M500", "Quadro M520", "Quadro M600", "Quadro M620", "Quadro M1000",
                 "Quadro M1200", "Quadro M2000", "Quadro M2200", "Quadro M3000", "Quadro M4000", "Quadro M5000", "Quadro M5500", "Quadro M6000",
                 "GeForce MX110", "GeForce MX130", "GeForce 830M", "GeForce 840M", "GeForce GTX 850M", "GeForce GTX 860M",
-                "GeForce GTX 1650", "GeForce GTX 1630"
+                "GeForce GTX 1650", "GeForce GTX 1630", "Tesla M4", "Tesla M6", "Tesla M10", "Tesla M40", "Tesla M60"
                 }
-
 
 def cuda_malloc_supported():
     try:
@@ -58,10 +63,7 @@ def cuda_malloc_supported():
                     return False
     return True
 
-
-def try_cuda_malloc():
-    do_cuda_malloc = False
-
+def do_cuda_malloc():
     try:
         version = ""
         torch_spec = importlib.util.find_spec("torch")
@@ -73,11 +75,15 @@ def try_cuda_malloc():
                 spec.loader.exec_module(module)
                 version = module.__version__
         if int(version[0]) >= 2:
-            do_cuda_malloc = cuda_malloc_supported()
+            return cuda_malloc_supported()
     except:
         pass
+    return False
 
-    if do_cuda_malloc:
+def try_cuda_malloc():
+    do_cuda = do_cuda_malloc()
+
+    if do_cuda:
         env_var = os.environ.get('PYTORCH_CUDA_ALLOC_CONF', None)
         if env_var is None:
             env_var = "backend:cudaMallocAsync"

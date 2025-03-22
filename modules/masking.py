@@ -5,12 +5,10 @@ def get_crop_region_v2(mask, pad=0):
     """
     Finds a rectangular region that contains all masked ares in a mask.
     Returns None if mask is completely black mask (all 0)
-
     Parameters:
     mask: PIL.Image.Image L mode or numpy 1d array
     pad: int number of pixels that the region will be extended on all sides
     Returns: (x1, y1, x2, y2) | None
-
     Introduced post 1.9.0
     """
     mask = mask if isinstance(mask, Image.Image) else Image.fromarray(mask)
@@ -25,7 +23,6 @@ def get_crop_region(mask, pad=0):
     when mask all black still return coordinates but the coordinates may be invalid ie x2>x1 or y2>y1
     Notes: it is possible for the coordinates to be "valid" again if pad size is sufficiently large
     (mask_size.x-pad, mask_size.y-pad, pad, pad)
-
     Extension developer should use get_crop_region_v2 instead unless for compatibility considerations.
     """
     mask = mask if isinstance(mask, Image.Image) else Image.fromarray(mask)

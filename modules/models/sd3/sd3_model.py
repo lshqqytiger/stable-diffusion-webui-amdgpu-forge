@@ -1,8 +1,11 @@
 import contextlib
-
+from modules.shared import opts
 import torch
 
-import k_diffusion
+if opts.sd_sampling == "A1111":
+    import k_diffusion
+elif opts.sd_sampling == "ldm patched (Comfy)":
+    import ldm_patched.k_diffusion as k_diffusion
 from modules.models.sd3.sd3_impls import BaseModel, SDVAE, SD3LatentFormat
 from modules.models.sd3.sd3_cond import SD3Cond
 

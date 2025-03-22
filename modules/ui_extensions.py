@@ -1,5 +1,6 @@
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from datetime import datetime, timezone
@@ -106,8 +107,9 @@ def check_updates(id_task, disable_list):
     exts = [ext for ext in extensions.extensions if ext.remote is not None and ext.name not in disabled]
     shared.state.job_count = len(exts)
 
-    for ext in exts:
-        shared.state.textinfo = ext.name
+    lock = threading.Lock()
+
+    def _check_update(ext):
 
         try:
             ext.check_updates()
@@ -115,9 +117,14 @@ def check_updates(id_task, disable_list):
             if 'FETCH_HEAD' not in str(e):
                 raise
         except Exception:
-            errors.report(f"Error checking updates for {ext.name}", exc_info=True)
-
-        shared.state.nextjob()
+            with lock:
+                errors.report(f"Error checking updates for {ext.name}", exc_info=True)
+        with lock:
+            shared.state.textinfo = ext.name
+            shared.state.nextjob()
+    with ThreadPoolExecutor(max_workers=max(1, int(shared.opts.concurrent_git_fetch_limit))) as executor:
+        for ext in exts:
+            executor.submit(_check_update, ext)
 
     return extension_table(), ""
 

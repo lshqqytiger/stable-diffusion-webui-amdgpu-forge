@@ -1,11 +1,18 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Union, Dict, TypedDict
+from typing import List, Optional, Union, Dict, TypedDict, Any
 import numpy as np
 from modules import shared
 from lib_controlnet.logging import logger
 from lib_controlnet.enums import InputMode, HiResFixOption
 from modules.api import api
+
+from lib_controlnet.enums import (
+    InputMode,
+    HiResFixOption,
+    PuLIDMode,
+    ControlNetUnionControlType,
+)
 
 
 def get_api_version() -> int:
@@ -18,8 +25,8 @@ class ControlMode(Enum):
     """
 
     BALANCED = "Balanced"
-    PROMPT = "My prompt is more important"
-    CONTROL = "ControlNet is more important"
+    PROMPT = "Prefer Prompt"
+    CONTROL = "Prefer ControlNet"
 
 
 class BatchOption(Enum):
@@ -53,31 +60,55 @@ resize_mode_aliases = {
     'Envelope (Outer Fit)': 'Resize and Fill',
 }
 
+ipa_block_weight_presets = {
+    "Default"               : "1, 1, 1, 1, 1.0, 1, 1, 1, 1, 1, 1",
+    "Style"                 : "0, 0, 1, 0, 0.0, 0, 1, 0, 0, 0, 0",
+    "Style (Strong)"        : "1, 1, 1, 0, 0.0, 0, 1, 1, 1, 1, 1",
+    "Composition"           : "0, 0, 0, 0, 0.0, 1, 0, 0, 0, 0, 0", 
+    "Composition (Strong)"  : "0, 0, 0, 1, 0.0, 1, 0, 0, 0, 0, 0", 
+    "Style+Composition"     : "0, 0, 1, 1, 0.0, 1, 1, 0, 0, 0, 0", 
+    "Custom"                : "",
+}
+
 
 def resize_mode_from_value(value: Union[str, int, ResizeMode]) -> ResizeMode:
     if isinstance(value, str):
+        if value.startswith("ResizeMode."):
+            _, field = value.split(".")
+            return getattr(ResizeMode, field)
         return ResizeMode(resize_mode_aliases.get(value, value))
     elif isinstance(value, int):
         assert value >= 0
         if value == 3:  # 'Just Resize (Latent upscale)'
             return ResizeMode.RESIZE
-
-        if value >= len(ResizeMode):
-            logger.warning(f'Unrecognized ResizeMode int value {value}. Fall back to RESIZE.')
+        try:
+            return list(ResizeMode)[value]
+        except IndexError:
+            print(f'Unrecognized ResizeMode int value {value}. Fall back to RESIZE.')
             return ResizeMode.RESIZE
-
-        return [e for e in ResizeMode][value]
-    else:
+    elif isinstance(value, ResizeMode):
         return value
+    else:
+        raise TypeError(f"ResizeMode value must be str, int, or ResizeMode, not {type(value)}")
 
 
 def control_mode_from_value(value: Union[str, int, ControlMode]) -> ControlMode:
     if isinstance(value, str):
-        return ControlMode(value)
+        try:
+            return ControlMode(value)
+        except ValueError:
+            print(f'Unrecognized ControlMode string value "{value}". Fall back to BALANCED.')
+            return ControlMode.BALANCED
     elif isinstance(value, int):
-        return [e for e in ControlMode][value]
-    else:
+        try:
+            return [e for e in ControlMode][value]
+        except IndexError:
+            print(f'Unrecognized ControlMode int value {value}. Fall back to BALANCED.')
+            return ControlMode.BALANCED
+    elif isinstance(value, ControlMode):
         return value
+    else:
+        raise TypeError(f"ControlMode value must be str, int, or ControlMode, not {type(value)}")
 
 
 def visualize_inpaint_mask(img):
@@ -155,31 +186,94 @@ class GradioImageMaskPair(TypedDict):
 
 @dataclass
 class ControlNetUnit:
+    """Represents an entire ControlNet processing unit.
+
+    To add a new field to this class
+    ## If the new field can be specified on UI, you need to
+    - Add a new field of the same name in constructor of `ControlNetUiGroup`
+    - Initialize the new `ControlNetUiGroup` field in `ControlNetUiGroup.render`
+      as a Gradio `IOComponent`.
+    - Add the new `ControlNetUiGroup` field to `unit_args` in
+      `ControlNetUiGroup.render`. The order of parameters matters.
+
+    ## If the new field needs to appear in infotext, you need to
+    - Add a new item in `ControlNetUnit.infotext_fields`.
+    API-only fields cannot appear in infotext.
+    """
+    # Following fields should only be used in the UI.
+    # ====== Start of UI only fields ======
+    # Specifies the input mode for the unit, defaulting to a simple mode.
     input_mode: InputMode = InputMode.SIMPLE
+    # Determines whether to use the preview image as input; defaults to False.
     use_preview_as_input: bool = False
+    # Directory path for batch processing of images.
     batch_image_dir: str = ''
+    # Directory path for batch processing of masks.
     batch_mask_dir: str = ''
+    # Optional list of gallery images for batch input; defaults to None.
     batch_input_gallery: Optional[List[str]] = None
+    # Optional list of gallery masks for batch processing; defaults to None.
     batch_mask_gallery: Optional[List[str]] = None
+    # Optional list of gallery images for multi-inputs; defaults to None.
+    multi_inputs_gallery: Optional[List[str]] = None
+    # Holds the preview image as a NumPy array; defaults to None.
     generated_image: Optional[np.ndarray] = None
+    # ====== End of UI only fields ======
+
+    # Following fields are used in both the API and the UI.
+    # Holds the mask image; defaults to None.
     mask_image: Optional[GradioImageMaskPair] = None
-    mask_image_fg: Optional[GradioImageMaskPair] = None
-    hr_option: Union[HiResFixOption, int, str] = HiResFixOption.BOTH
+    # Specifies how this unit should be applied in each pass of high-resolution fix.
+    # Ignored if high-resolution fix is not enabled.
+    hr_option: HiResFixOption = HiResFixOption.BOTH
+    # Indicates whether the unit is enabled; defaults to True.
     enabled: bool = True
+    # Name of the module being used; defaults to "None".
     module: str = "None"
+    # Name of the model being used; defaults to "None".
     model: str = "None"
+    # Weight of the unit in the overall processing; defaults to 1.0.
     weight: float = 1.0
+    # Optional image for input; defaults to None.
     image: Optional[GradioImageMaskPair] = None
-    image_fg: Optional[GradioImageMaskPair] = None
-    resize_mode: Union[ResizeMode, int, str] = ResizeMode.INNER_FIT
+    # Specifies the mode of image resizing; defaults to inner fit.
+    resize_mode: ResizeMode = ResizeMode.INNER_FIT
+    # Resolution for processing by the unit; defaults to -1 (unspecified).
     processor_res: int = -1
+    # Threshold A for processing; defaults to -1 (unspecified).
     threshold_a: float = -1
+    # Threshold B for processing; defaults to -1 (unspecified).
     threshold_b: float = -1
+    # Start value for guidance; defaults to 0.0.
     guidance_start: float = 0.0
+    # End value for guidance; defaults to 1.0.
     guidance_end: float = 1.0
+    # Enables pixel-perfect processing; defaults to False.
     pixel_perfect: bool = False
-    control_mode: Union[ControlMode, int, str] = ControlMode.BALANCED
+    # Control mode for the unit; defaults to balanced.
+    control_mode: ControlMode = ControlMode.BALANCED
+    # Weight for each layer of ControlNet params.
+    # For ControlNet:
+    # - SD1.5: 13 weights (4 encoder block * 3 + 1 middle block)
+    # - SDXL: 10 weights (3 encoder block * 3 + 1 middle block)
+    # For T2IAdapter
+    # - SD1.5: 5 weights (4 encoder block + 1 middle block)
+    # - SDXL: 4 weights (3 encoder block + 1 middle block)
+    # For IPAdapter
+    # - SD15: 16 (6 input blocks + 9 output blocks + 1 middle block)
+    # - SDXL: 11 weights (4 input blocks + 6 output blocks + 1 middle block)
+    # Note1: Setting advanced weighting will disable `soft_injection`, i.e.
+    # It is recommended to set ControlMode = BALANCED when using `advanced_weighting`.
+    # Note2: The field `weight` is still used in some places, e.g. reference_only,
+    # even advanced_weighting is set.
+    advanced_weighting: Optional[List[float]] = None
+    ipa_block_weight: Optional[str] = None
+
+    # Following fields should only be used in the API.
+    # ====== Start of API only fields ======
+    # Whether to save the detected map for this unit; defaults to True.
     save_detected_map: bool = True
+    # ====== End of API only fields ======
 
     @staticmethod
     def infotext_fields():
@@ -211,9 +305,30 @@ class ControlNetUnit:
             **{k: v for k, v in d.items() if k in vars(ControlNetUnit)}
         )
         if isinstance(unit.image, str):
-            unit.image = np.array(api.decode_base64_to_image(unit.image)).astype('uint8')
+            img = np.array(api.decode_base64_to_image(unit.image)).astype('uint8')
+            unit.image = {
+                "image": img,
+                "mask": np.zeros_like(img),
+            }
         if isinstance(unit.mask_image, str):
-            unit.mask_image = np.array(api.decode_base64_to_image(unit.mask_image)).astype('uint8')
+            mask = np.array(api.decode_base64_to_image(unit.mask_image)).astype('uint8')
+            if unit.image is not None:
+                # Attach mask on image if ControlNet has input image.
+                assert isinstance(unit.image, dict)
+                unit.image["mask"] = mask
+                unit.mask_image = None
+            else:
+                # Otherwise, wire to standalone mask.
+                # This happens in img2img when using A1111 img2img input.
+                unit.mask_image = {
+                    "image": mask,
+                    "mask": np.zeros_like(mask),
+                }
+        # Convert strings to enums.
+        unit.input_mode = InputMode(unit.input_mode)
+        unit.hr_option = HiResFixOption.from_value(unit.hr_option)
+        unit.resize_mode = resize_mode_from_value(unit.resize_mode)
+        unit.control_mode = control_mode_from_value(unit.control_mode)
         return unit
 
 
@@ -236,3 +351,14 @@ def get_max_models_num():
 
     max_models_num = shared.opts.data.get("control_net_unit_count", 3)
     return max_models_num
+
+def to_processing_unit(unit: Union[Dict[str, Any], ControlNetUnit]) -> ControlNetUnit:
+    """
+    Convert different types to processing unit.
+    Backward Compatible
+    """
+
+    if isinstance(unit, dict):
+        unit = ControlNetUnit.from_dict(unit)
+
+    return unit

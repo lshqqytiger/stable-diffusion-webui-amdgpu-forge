@@ -226,7 +226,6 @@
     background: var(--background-fill-primary);
     color: var(--block-label-text-color);
 }
-
 .controlnet_control_type_filter_group label {
     background: unset !important;
     border: unset !important;

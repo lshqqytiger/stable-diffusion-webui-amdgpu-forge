@@ -59,15 +59,22 @@ def enable_tf32():
 
 cpu: torch.device = torch.device("cpu")
 fp8: bool = False
-device: torch.device = memory_management.get_torch_device()
-device_interrogate: torch.device = memory_management.text_encoder_device()  # for backward compatibility, not used now
-device_gfpgan: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
-device_esrgan: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
-device_codeformer: torch.device = memory_management.get_torch_device()  # will be managed by memory management system
-dtype: torch.dtype = torch.float32 if memory_management.unet_dtype() is torch.float32 else torch.float16
-dtype_vae: torch.dtype = memory_management.vae_dtype()
-dtype_unet: torch.dtype = memory_management.unet_dtype()
-dtype_inference: torch.dtype = memory_management.unet_dtype()
+device: torch.device = model_management.get_torch_device()
+device_interrogate: torch.device = model_management.text_encoder_device()  # for backward compatibility, not used now
+device_gfpgan: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_esrgan: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_hat: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_dat: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_srformer: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_grl: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_omnisr: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_span: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_compact: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+device_codeformer: torch.device = model_management.get_torch_device()  # will be managed by memory management system
+dtype: torch.dtype = model_management.unet_dtype()
+dtype_vae: torch.dtype = model_management.vae_dtype()
+dtype_unet: torch.dtype = model_management.unet_dtype()
+dtype_inference: torch.dtype = model_management.unet_dtype()
 unet_needs_upcast = False
 
 

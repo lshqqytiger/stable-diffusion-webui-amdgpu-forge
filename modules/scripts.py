@@ -30,9 +30,8 @@ class PostSampleArgs:
         self.samples = samples
 
 class PostprocessImageArgs:
-    def __init__(self, image, index):
+    def __init__(self, image):
         self.image = image
-        self.index = index
 
 class PostProcessMaskOverlayArgs:
     def __init__(self, index, mask_for_overlay, overlay_image):
@@ -190,6 +189,15 @@ class Script:
           - extra_network_data - list of ExtraNetworkParams for current stage
         """
         pass
+
+    def process_before_every_step(self, p, *args, **kwargs):
+        """
+        Called before every step within the sampler.
+        **kwargs will have the following items:
+         - d - the current generation data
+        """
+        pass
+
 
     def process_before_every_sampling(self, p, *args, **kwargs):
         """
@@ -845,6 +853,14 @@ class ScriptRunner:
             except Exception:
                 errors.report(f"Error running process: {script.filename}", exc_info=True)
 
+    def process_before_every_step(self, p, **kwargs):
+        for script in self.ordered_scripts('process_before_every_step'):
+            try:
+                script_args = p.script_args[script.args_from:script.args_to]
+                script.process_before_every_step(p, *script_args, **kwargs)
+            except Exception:
+                errors.report(f"Error running process_before_every_step: {script.filename}", exc_info=True)
+
     def process_before_every_sampling(self, p, **kwargs):
         for script in self.ordered_scripts('process_before_every_sampling'):
             try:
@@ -884,14 +900,6 @@ class ScriptRunner:
                 script.process_batch(p, *script_args, **kwargs)
             except Exception:
                 errors.report(f"Error running process_batch: {script.filename}", exc_info=True)
-
-    def process_before_every_sampling(self, p, **kwargs):
-        for script in self.alwayson_scripts:
-            try:
-                script_args = p.script_args[script.args_from:script.args_to]
-                script.process_before_every_sampling(p, *script_args, **kwargs)
-            except Exception:
-                errors.report(f"Error running process_before_every_sampling: {script.filename}", exc_info=True)
 
     def postprocess(self, p, processed):
         for script in self.ordered_scripts('postprocess'):

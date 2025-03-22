@@ -29,11 +29,11 @@ import torch.nn as nn
 
 from zoedepth.models.depth_model import DepthModel
 from zoedepth.models.base_models.midas import MidasCore
-from zoedepth.models.layers.attractor import AttractorLayer, AttractorLayerUnnormed
-from zoedepth.models.layers.dist_layers import ConditionalLogBinomial
-from zoedepth.models.layers.localbins_layers import (Projector, SeedBinRegressor,
+from zoedepth..layers.attractor import AttractorLayer, AttractorLayerUnnormed
+from zoedepth..layers.dist_layers import ConditionalLogBinomial
+from zoedepth..layers.localbins_layers import (Projector, SeedBinRegressor,
                                             SeedBinRegressorUnnormed)
-from zoedepth.models.layers.patch_transformer import PatchTransformerEncoder
+from zoedepth..layers.patch_transformer import PatchTransformerEncoder
 from zoedepth.models.model_io import load_state_from_resource
 
 
@@ -57,8 +57,8 @@ class ZoeDepthNK(DepthModel):
             bin_embedding_dim (int, optional): bin embedding dimension. Defaults to 128.
 
             n_attractors (List[int], optional): Number of bin attractors at decoder layers. Defaults to [16, 8, 4, 1].
-            attractor_alpha (int, optional): Proportional attractor strength. Refer to models.layers.attractor for more details. Defaults to 300.
-            attractor_gamma (int, optional): Exponential attractor strength. Refer to models.layers.attractor for more details. Defaults to 2.
+            attractor_alpha (int, optional): Proportional attractor strength. Refer to .layers.attractor for more details. Defaults to 300.
+            attractor_gamma (int, optional): Exponential attractor strength. Refer to .layers.attractor for more details. Defaults to 2.
             attractor_kind (str, optional): Attraction aggregation "sum" or "mean". Defaults to 'sum'.
             attractor_type (str, optional): Type of attractor to use; "inv" (Inverse attractor) or "exp" (Exponential attractor). Defaults to 'exp'.
 

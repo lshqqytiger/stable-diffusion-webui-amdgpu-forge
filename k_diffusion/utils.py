@@ -1,37 +1,19 @@
+# Original code from Comfy, https://github.com/comfyanonymous/ComfyUI
+
+
+
 from contextlib import contextmanager
 import hashlib
 import math
 from pathlib import Path
 import shutil
-import threading
-import time
 import urllib
 import warnings
 
 from PIL import Image
-import safetensors
 import torch
 from torch import nn, optim
 from torch.utils import data
-from torchvision.transforms import functional as TF
-
-
-def from_pil_image(x):
-    """Converts from a PIL image to a tensor."""
-    x = TF.to_tensor(x)
-    if x.ndim == 2:
-        x = x[..., None]
-    return x * 2 - 1
-
-
-def to_pil_image(x):
-    """Converts from a tensor to a PIL image."""
-    if x.ndim == 4:
-        assert x.shape[0] == 1
-        x = x[0]
-    if x.shape[0] == 1:
-        x = x[0]
-    return TF.to_pil_image((x.clamp(-1, 1) + 1) / 2)
 
 
 def hf_datasets_augs_helper(examples, transform, image_key, mode='RGB'):
@@ -45,7 +27,10 @@ def append_dims(x, target_dims):
     dims_to_append = target_dims - x.ndim
     if dims_to_append < 0:
         raise ValueError(f'input has {x.ndim} dims but target_dims is {target_dims}, which is less')
-    return x[(...,) + (None,) * dims_to_append]
+    expanded = x[(...,) + (None,) * dims_to_append]
+    # MPS will get inf values if it tries to index into the new axes, but detaching fixes this.
+    # https://github.com/pytorch/pytorch/issues/84364
+    return expanded.detach().clone() if expanded.device.type == 'mps' else expanded
 
 
 def n_params(module):
@@ -94,7 +79,7 @@ def ema_update(model, averaged_model, decay):
     assert model_params.keys() == averaged_params.keys()
 
     for name, param in model_params.items():
-        averaged_params[name].lerp_(param, 1 - decay)
+        averaged_params[name].mul_(decay).add_(param, alpha=1 - decay)
 
     model_buffers = dict(model.named_buffers())
     averaged_buffers = dict(averaged_model.named_buffers())
@@ -234,96 +219,9 @@ class ExponentialLR(optim.lr_scheduler._LRScheduler):
                 for base_lr in self.base_lrs]
 
 
-class ConstantLRWithWarmup(optim.lr_scheduler._LRScheduler):
-    """Implements a constant learning rate schedule with an optional exponential
-    warmup. When last_epoch=-1, sets initial lr as lr.
-    Args:
-        optimizer (Optimizer): Wrapped optimizer.
-        warmup (float): Exponential warmup factor (0 <= warmup < 1, 0 to disable)
-            Default: 0.
-        last_epoch (int): The index of last epoch. Default: -1.
-        verbose (bool): If ``True``, prints a message to stdout for
-            each update. Default: ``False``.
-    """
-
-    def __init__(self, optimizer, warmup=0., last_epoch=-1, verbose=False):
-        if not 0. <= warmup < 1:
-            raise ValueError('Invalid value for warmup')
-        self.warmup = warmup
-        super().__init__(optimizer, last_epoch, verbose)
-
-    def get_lr(self):
-        if not self._get_lr_called_within_step:
-            warnings.warn("To get the last learning rate computed by the scheduler, "
-                          "please use `get_last_lr()`.")
-
-        return self._get_closed_form_lr()
-
-    def _get_closed_form_lr(self):
-        warmup = 1 - self.warmup ** (self.last_epoch + 1)
-        return [warmup * base_lr for base_lr in self.base_lrs]
-
-
-def stratified_uniform(shape, group=0, groups=1, dtype=None, device=None):
-    """Draws stratified samples from a uniform distribution."""
-    if groups <= 0:
-        raise ValueError(f"groups must be positive, got {groups}")
-    if group < 0 or group >= groups:
-        raise ValueError(f"group must be in [0, {groups})")
-    n = shape[-1] * groups
-    offsets = torch.arange(group, n, groups, dtype=dtype, device=device)
-    u = torch.rand(shape, dtype=dtype, device=device)
-    return (offsets + u) / n
-
-
-stratified_settings = threading.local()
-
-
-@contextmanager
-def enable_stratified(group=0, groups=1, disable=False):
-    """A context manager that enables stratified sampling."""
-    try:
-        stratified_settings.disable = disable
-        stratified_settings.group = group
-        stratified_settings.groups = groups
-        yield
-    finally:
-        del stratified_settings.disable
-        del stratified_settings.group
-        del stratified_settings.groups
-
-
-@contextmanager
-def enable_stratified_accelerate(accelerator, disable=False):
-    """A context manager that enables stratified sampling, distributing the strata across
-    all processes and gradient accumulation steps using settings from Hugging Face Accelerate."""
-    try:
-        rank = accelerator.process_index
-        world_size = accelerator.num_processes
-        acc_steps = accelerator.gradient_state.num_steps
-        acc_step = accelerator.step % acc_steps
-        group = rank * acc_steps + acc_step
-        groups = world_size * acc_steps
-        with enable_stratified(group, groups, disable=disable):
-            yield
-    finally:
-        pass
-
-
-def stratified_with_settings(shape, dtype=None, device=None):
-    """Draws stratified samples from a uniform distribution, using settings from a context
-    manager."""
-    if not hasattr(stratified_settings, 'disable') or stratified_settings.disable:
-        return torch.rand(shape, dtype=dtype, device=device)
-    return stratified_uniform(
-        shape, stratified_settings.group, stratified_settings.groups, dtype=dtype, device=device
-    )
-
-
 def rand_log_normal(shape, loc=0., scale=1., device='cpu', dtype=torch.float32):
     """Draws samples from an lognormal distribution."""
-    u = stratified_with_settings(shape, device=device, dtype=dtype) * (1 - 2e-7) + 1e-7
-    return torch.distributions.Normal(loc, scale).icdf(u).exp()
+    return (torch.randn(shape, device=device, dtype=dtype) * scale + loc).exp()
 
 
 def rand_log_logistic(shape, loc=0., scale=1., min_value=0., max_value=float('inf'), device='cpu', dtype=torch.float32):
@@ -332,7 +230,7 @@ def rand_log_logistic(shape, loc=0., scale=1., min_value=0., max_value=float('in
     max_value = torch.as_tensor(max_value, device=device, dtype=torch.float64)
     min_cdf = min_value.log().sub(loc).div(scale).sigmoid()
     max_cdf = max_value.log().sub(loc).div(scale).sigmoid()
-    u = stratified_with_settings(shape, device=device, dtype=torch.float64) * (max_cdf - min_cdf) + min_cdf
+    u = torch.rand(shape, device=device, dtype=torch.float64) * (max_cdf - min_cdf) + min_cdf
     return u.logit().mul(scale).add(loc).exp().to(dtype)
 
 
@@ -340,39 +238,15 @@ def rand_log_uniform(shape, min_value, max_value, device='cpu', dtype=torch.floa
     """Draws samples from an log-uniform distribution."""
     min_value = math.log(min_value)
     max_value = math.log(max_value)
-    return (stratified_with_settings(shape, device=device, dtype=dtype) * (max_value - min_value) + min_value).exp()
+    return (torch.rand(shape, device=device, dtype=dtype) * (max_value - min_value) + min_value).exp()
 
 
 def rand_v_diffusion(shape, sigma_data=1., min_value=0., max_value=float('inf'), device='cpu', dtype=torch.float32):
     """Draws samples from a truncated v-diffusion training timestep distribution."""
     min_cdf = math.atan(min_value / sigma_data) * 2 / math.pi
     max_cdf = math.atan(max_value / sigma_data) * 2 / math.pi
-    u = stratified_with_settings(shape, device=device, dtype=dtype) * (max_cdf - min_cdf) + min_cdf
+    u = torch.rand(shape, device=device, dtype=dtype) * (max_cdf - min_cdf) + min_cdf
     return torch.tan(u * math.pi / 2) * sigma_data
-
-
-def rand_cosine_interpolated(shape, image_d, noise_d_low, noise_d_high, sigma_data=1., min_value=1e-3, max_value=1e3, device='cpu', dtype=torch.float32):
-    """Draws samples from an interpolated cosine timestep distribution (from simple diffusion)."""
-
-    def logsnr_schedule_cosine(t, logsnr_min, logsnr_max):
-        t_min = math.atan(math.exp(-0.5 * logsnr_max))
-        t_max = math.atan(math.exp(-0.5 * logsnr_min))
-        return -2 * torch.log(torch.tan(t_min + t * (t_max - t_min)))
-
-    def logsnr_schedule_cosine_shifted(t, image_d, noise_d, logsnr_min, logsnr_max):
-        shift = 2 * math.log(noise_d / image_d)
-        return logsnr_schedule_cosine(t, logsnr_min - shift, logsnr_max - shift) + shift
-
-    def logsnr_schedule_cosine_interpolated(t, image_d, noise_d_low, noise_d_high, logsnr_min, logsnr_max):
-        logsnr_low = logsnr_schedule_cosine_shifted(t, image_d, noise_d_low, logsnr_min, logsnr_max)
-        logsnr_high = logsnr_schedule_cosine_shifted(t, image_d, noise_d_high, logsnr_min, logsnr_max)
-        return torch.lerp(logsnr_low, logsnr_high, t)
-
-    logsnr_min = -2 * math.log(min_value / sigma_data)
-    logsnr_max = -2 * math.log(max_value / sigma_data)
-    u = stratified_with_settings(shape, device=device, dtype=dtype)
-    logsnr = logsnr_schedule_cosine_interpolated(u, image_d, noise_d_low, noise_d_high, logsnr_min, logsnr_max)
-    return torch.exp(-logsnr / 2) * sigma_data
 
 
 def rand_split_log_normal(shape, loc, scale_1, scale_2, device='cpu', dtype=torch.float32):
@@ -441,18 +315,4 @@ def tf32_mode(cudnn=None, matmul=None):
             torch.backends.cudnn.allow_tf32 = cudnn_old
         if matmul is not None:
             torch.backends.cuda.matmul.allow_tf32 = matmul_old
-
-
-def get_safetensors_metadata(path):
-    """Retrieves the metadata from a safetensors file."""
-    return safetensors.safe_open(path, "pt").metadata()
-
-
-def ema_update_dict(values, updates, decay):
-    for k, v in updates.items():
-        if k not in values:
-            values[k] = v
-        else:
-            values[k] *= decay
-            values[k] += (1 - decay) * v
-    return values
+            

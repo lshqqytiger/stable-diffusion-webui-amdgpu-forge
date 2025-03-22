@@ -13,6 +13,8 @@ import numpy as np
 import piexif
 import piexif.helper
 from PIL import Image, ImageFont, ImageDraw, ImageColor, PngImagePlugin, ImageOps
+from PIL import __version__ as pillow_version
+from pkg_resources import parse_version
 # pillow_avif needs to be imported somewhere in code for it to work
 import pillow_avif # noqa: F401
 import string
@@ -168,9 +170,19 @@ def draw_grid_annotations(im, width, height, hor_texts, ver_texts, margin=0):
         for line in lines:
             fnt = initial_fnt
             fontsize = initial_fontsize
-            while drawing.multiline_textsize(line.text, font=fnt)[0] > line.allowed_width and fontsize > 0:
-                fontsize -= 1
-                fnt = get_font(fontsize)
+            if parse_version(pillow_version) >= parse_version('10.0.0'):
+                # New code for Pillow 10.0.0+
+                text_width, text_height = drawing.multiline_textbbox((0, 0), line.text, font=fnt)[2:]
+                while text_width > line.allowed_width and fontsize > 0:
+                    fontsize -= 1
+                    fnt = get_font(fontsize)
+                    text_width, text_height = drawing.multiline_textbbox((0, 0), line.text, font=fnt)[2:]
+            else:
+                # Old code for Pillow versions below 10.0.0
+                while drawing.multiline_textsize(line.text, font=fnt)[0] > line.allowed_width and fontsize > 0:
+                    fontsize -= 1
+                    fnt = get_font(fontsize)
+
             drawing.multiline_text((draw_x, draw_y + line.size[1] / 2), line.text, font=fnt, fill=color_active if line.is_active else color_inactive, anchor="mm", align="center")
 
             if not line.is_active:
@@ -645,7 +657,7 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
             Additional PNG info. `existing_info == {pngsectionname: info, ...}`
         no_prompt:
             TODO I don't know its meaning.
-        p (`StableDiffusionProcessing` or `Processing`)
+        p (`StableDiffusionProcessing`)
         forced_filename (`str`):
             If specified, `basename` and filename pattern will be ignored.
         save_to_dirs (bool):
@@ -676,13 +688,10 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
     if forced_filename is None:
         if short_filename or seed is None:
             file_decoration = ""
-        elif hasattr(p, 'override_settings'):
-            file_decoration = p.override_settings.get("samples_filename_pattern")
+        elif opts.save_to_dirs:
+            file_decoration = opts.samples_filename_pattern or "[seed]"
         else:
-            file_decoration = None
-
-        if file_decoration is None:
-            file_decoration = opts.samples_filename_pattern or ("[seed]" if opts.save_to_dirs else "[seed]-[prompt_spaces]")
+            file_decoration = opts.samples_filename_pattern or "[seed]-[prompt_spaces]"
 
         file_decoration = namegen.apply(file_decoration) + suffix
 
@@ -711,6 +720,7 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
     params = script_callbacks.ImageSaveParams(image, p, fullfn, pnginfo)
     if opts.enable_pnginfo:
         stealth_infotext.add_stealth_pnginfo(params)
+
     script_callbacks.before_image_saved_callback(params)
 
     image = params.image
@@ -726,15 +736,12 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
         save_image_with_geninfo(image_to_save, info, temp_file_path, extension, existing_pnginfo=params.pnginfo, pnginfo_section_name=pnginfo_section_name)
 
         filename = filename_without_extension + extension
-        without_extension = filename_without_extension
         if shared.opts.save_images_replace_action != "Replace":
             n = 0
             while os.path.exists(filename):
                 n += 1
-                without_extension = f"{filename_without_extension}-{n}"
-                filename = without_extension + extension
+                filename = f"{filename_without_extension}-{n}{extension}"
         os.replace(temp_file_path, filename)
-        return without_extension
 
     fullfn_without_extension, extension = os.path.splitext(params.filename)
     if hasattr(os, 'statvfs'):
@@ -742,9 +749,8 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
         fullfn_without_extension = fullfn_without_extension[:max_name_len - max(4, len(extension))]
         params.filename = fullfn_without_extension + extension
         fullfn = params.filename
+    _atomically_save_image(image, fullfn_without_extension, extension)
 
-    fullfn_without_extension = _atomically_save_image(image, fullfn_without_extension, extension)
-    fullfn = fullfn_without_extension + extension
     image.already_saved_as = fullfn
 
     oversize = image.width > opts.target_side_length or image.height > opts.target_side_length
@@ -763,7 +769,7 @@ def save_image(image, path, basename, seed=None, prompt=None, extension='png', i
             except Exception:
                 image = image.resize(resize_to)
         try:
-            _ = _atomically_save_image(image, fullfn_without_extension, ".jpg")
+            _atomically_save_image(image, fullfn_without_extension, ".jpg")
         except Exception as e:
             errors.display(e, "saving image as downscaled JPG")
 

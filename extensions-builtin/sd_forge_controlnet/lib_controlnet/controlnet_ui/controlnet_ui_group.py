@@ -1,3 +1,4 @@
+import os        
 import json
 import gradio as gr
 import functools
@@ -11,46 +12,52 @@ from lib_controlnet import (
     global_state,
     external_code,
 )
+from lib_controlnet.external_code import ControlNetUnit
 from lib_controlnet.logging import logger
 from lib_controlnet.controlnet_ui.openpose_editor import OpenposeEditor
+from lib_controlnet.controlnet_ui.preset import ControlNetPresetUI
+from lib_controlnet.controlnet_ui.tool_button import ToolButton
 from lib_controlnet.controlnet_ui.photopea import Photopea
+from lib_controlnet.controlnet_ui.multi_inputs_gallery import MultiInputsGallery
 from lib_controlnet.enums import InputMode, HiResFixOption
 from modules import shared, script_callbacks
 from modules.ui_components import FormRow
-from modules_forge.utils import HWC3
-from lib_controlnet.external_code import UiControlNetUnit
-from modules.ui_components import ToolButton
-from gradio_rangeslider import RangeSlider
-from modules_forge.forge_canvas.canvas import ForgeCanvas
+from modules_forge.forge_util import HWC3
+from lib_controlnet.enums import (
+    InputMode,
+    HiResFixOption,
+    PuLIDMode,
+    ControlNetUnionControlType,
+)
 
 
 @dataclass
 class A1111Context:
     """Contains all components from A1111."""
 
-    img2img_batch_input_dir = None
-    img2img_batch_output_dir = None
-    txt2img_submit_button = None
-    img2img_submit_button = None
+    img2img_batch_input_dir: Optional[gr.components.IOComponent] = None
+    img2img_batch_output_dir: Optional[gr.components.IOComponent] = None
+    txt2img_submit_button: Optional[gr.components.IOComponent] = None
+    img2img_submit_button: Optional[gr.components.IOComponent] = None
 
     # Slider controls from A1111 WebUI.
-    txt2img_w_slider = None
-    txt2img_h_slider = None
-    img2img_w_slider = None
-    img2img_h_slider = None
+    txt2img_w_slider: Optional[gr.components.IOComponent] = None
+    txt2img_h_slider: Optional[gr.components.IOComponent] = None
+    img2img_w_slider: Optional[gr.components.IOComponent] = None
+    img2img_h_slider: Optional[gr.components.IOComponent] = None
 
-    img2img_img2img_tab = None
-    img2img_img2img_sketch_tab = None
-    img2img_batch_tab = None
-    img2img_inpaint_tab = None
-    img2img_inpaint_sketch_tab = None
-    img2img_inpaint_upload_tab = None
+    img2img_img2img_tab: Optional[gr.components.IOComponent] = None
+    img2img_img2img_sketch_tab: Optional[gr.components.IOComponent] = None
+    img2img_batch_tab: Optional[gr.components.IOComponent] = None
+    img2img_inpaint_tab: Optional[gr.components.IOComponent] = None
+    img2img_inpaint_sketch_tab: Optional[gr.components.IOComponent] = None
+    img2img_inpaint_upload_tab: Optional[gr.components.IOComponent] = None
 
-    img2img_inpaint_area = None
-    txt2img_enable_hr = None
+    img2img_inpaint_area: Optional[gr.components.IOComponent] = None
+    txt2img_enable_hr: Optional[gr.components.IOComponent] = None
 
     @property
-    def img2img_inpaint_tabs(self):
+    def img2img_inpaint_tabs(self) -> Tuple[gr.components.IOComponent]:
         return (
             self.img2img_inpaint_tab,
             self.img2img_inpaint_sketch_tab,
@@ -58,7 +65,7 @@ class A1111Context:
         )
 
     @property
-    def img2img_non_inpaint_tabs(self):
+    def img2img_non_inpaint_tabs(self) -> Tuple[gr.components.IOComponent]:
         return (
             self.img2img_img2img_tab,
             self.img2img_img2img_sketch_tab,
@@ -82,7 +89,7 @@ class A1111Context:
             if name not in optional_components.values()
         )
 
-    def set_component(self, component):
+    def set_component(self, component: gr.components.IOComponent):
         id_mapping = {
             "img2img_batch_input_dir": "img2img_batch_input_dir",
             "img2img_batch_output_dir": "img2img_batch_output_dir",
@@ -172,10 +179,10 @@ class ControlNetUiGroup(object):
         self.webcam_mirrored = False
 
         # Note: All gradio elements declared in `render` will be defined as member variable.
-        # Update counter to trigger a force update of UiControlNetUnit.
+        # Update counter to trigger a force update of ControlNetUnit.
         # dummy_gradio_update_trigger is useful when a field with no event subscriber available changes.
         # e.g. gr.Gallery, gr.State, etc. After an update to gr.State / gr.Gallery, please increment
-        # this counter to trigger a sync update of UiControlNetUnit.
+        # this counter to trigger a sync update of ControlNetUnit.
         self.dummy_gradio_update_trigger = None
         self.enabled = None
         self.upload_tab = None
@@ -186,15 +193,19 @@ class ControlNetUiGroup(object):
         self.mask_image = None
         self.batch_tab = None
         self.batch_image_dir = None
-        self.merge_tab = None
+        self.batch_upload_tab = None
         self.batch_input_gallery = None
         self.batch_mask_gallery = None
+        self.multi_inputs_upload_tab = None
+        self.multi_inputs_input_gallery = None
         self.create_canvas = None
         self.canvas_width = None
         self.canvas_height = None
         self.canvas_create_button = None
         self.canvas_cancel_button = None
         self.open_new_canvas_button = None
+        self.webcam_enable = None
+        self.webcam_mirror = None
         self.send_dimen_button = None
         self.pixel_perfect = None
         self.preprocessor_preview = None
@@ -205,7 +216,6 @@ class ControlNetUiGroup(object):
         self.model = None
         self.refresh_models = None
         self.weight = None
-        self.timestep_range = None
         self.guidance_start = None
         self.guidance_end = None
         self.advanced = None
@@ -216,13 +226,18 @@ class ControlNetUiGroup(object):
         self.resize_mode = None
         self.use_preview_as_input = None
         self.openpose_editor = None
+        self.preset_panel = None
         self.upload_independent_img_in_img2img = None
         self.image_upload_panel = None
         self.save_detected_map = None
         self.input_mode = gr.State(InputMode.SIMPLE)
         self.hr_option = None
+        self.ipa_block_weight = None
+        self.ipa_block_weight_selector = None
+        self.ipa_block_weight_save_button = None                                                  
         self.batch_image_dir_state = None
         self.output_dir_state = None
+        self.advanced_weighting = gr.State(None)
 
         # Internal states for UI state pasting.
         self.prevent_next_n_module_update = 0
@@ -247,34 +262,43 @@ class ControlNetUiGroup(object):
 
         with gr.Group(visible=not self.is_img2img) as self.image_upload_panel:
             self.save_detected_map = gr.Checkbox(value=True, visible=False)
-
-            with gr.Tabs(visible=True):
+            with gr.Tabs():
                 with gr.Tab(label="Single Image") as self.upload_tab:
                     with gr.Row(elem_classes=["cnet-image-row"], equal_height=True):
                         with gr.Group(elem_classes=["cnet-input-image-group"]):
-                            self.image = ForgeCanvas(
+                            self.image = gr.Image(
+                                source="upload",
+                                brush_radius=20,
+                                mirror_webcam=False,
+                                type="numpy",
+                                tool="sketch",
                                 elem_id=f"{elem_id_tabname}_{tabname}_input_image",
                                 elem_classes=["cnet-image"],
-                                contrast_scribbles=True,
-                                height=300,
-                                numpy=True
+                                brush_color=shared.opts.img2img_inpaint_mask_brush_color
+                                if hasattr(
+                                    shared.opts, "img2img_inpaint_mask_brush_color"
+                                )
+                                else None,
+                            )
+                            self.image.preprocess = functools.partial(
+                                svg_preprocess, preprocess=self.image.preprocess
                             )
                             self.openpose_editor.render_upload()
 
                         with gr.Group(
-                                visible=False, elem_classes=["cnet-generated-image-group"]
+                            visible=False, elem_classes=["cnet-generated-image-group"]
                         ) as self.generated_image_group:
-                            self.generated_image = ForgeCanvas(
+                            self.generated_image = gr.Image(
+                                value=None,
+                                label="Preprocessor Preview",
                                 elem_id=f"{elem_id_tabname}_{tabname}_generated_image",
                                 elem_classes=["cnet-image"],
-                                height=300,
-                                no_scribbles=True,
-                                no_upload=True,
-                                numpy=True
-                            )
+                                interactive=True,
+                                height=242,
+                            )  # Gradio's magic number. Only 242 works.
 
                             with gr.Group(
-                                    elem_classes=["cnet-generated-image-control-group"]
+                                elem_classes=["cnet-generated-image-control-group"]
                             ):
                                 if self.photopea:
                                     self.photopea.render_child_trigger()
@@ -288,18 +312,22 @@ class ControlNetUiGroup(object):
                                 )
 
                         with gr.Group(
-                                visible=False, elem_classes=["cnet-mask-image-group"]
+                            visible=False, elem_classes=["cnet-mask-image-group"]
                         ) as self.mask_image_group:
-                            self.mask_image = ForgeCanvas(
+                            self.mask_image = gr.Image(
+                                value=None,
+                                label="Mask",
                                 elem_id=f"{elem_id_tabname}_{tabname}_mask_image",
                                 elem_classes=["cnet-mask-image"],
-                                height=300,
-                                scribble_color='#FFFFFF',
-                                scribble_width=1,
-                                scribble_alpha_fixed=True,
-                                scribble_color_fixed=True,
-                                scribble_softness_fixed=True,
-                                numpy=True
+                                interactive=True,
+                                brush_radius=20,
+                                type="numpy",
+                                tool="sketch",
+                                brush_color=shared.opts.img2img_inpaint_mask_brush_color
+                                if hasattr(
+                                    shared.opts, "img2img_inpaint_mask_brush_color"
+                                )
+                                else None,
                             )
 
                 with gr.Tab(label="Batch Folder") as self.batch_tab:
@@ -316,20 +344,20 @@ class ControlNetUiGroup(object):
                             visible=False,
                         )
 
-                with gr.Tab(label="Batch Upload") as self.merge_tab:
+                with gr.Tab(label="Batch Upload") as self.batch_upload_tab:
                     with gr.Row():
-                        with gr.Column():
-                            self.batch_input_gallery = gr.Gallery(
-                                columns=[4], rows=[2], object_fit="contain", height="auto", label="Images"
-                            )
-                        with gr.Group(visible=False, elem_classes=["cnet-mask-gallery-group"]) as self.batch_mask_gallery_group:
-                            with gr.Column():
-                                self.batch_mask_gallery = gr.Gallery(
-                                    columns=[4], rows=[2], object_fit="contain", height="auto", label="Masks"
-                                )
+                        self.batch_input_gallery = MultiInputsGallery()
+                        self.batch_mask_gallery = MultiInputsGallery(
+                            visible=False,
+                            elem_classes=["cnet-mask-gallery-group"]
+                        )
+
+                with gr.Tab(label="Multi-Inputs") as self.multi_inputs_upload_tab:
+                    with gr.Row():
+                        self.multi_inputs_gallery = MultiInputsGallery()
 
             if self.photopea:
-                self.photopea.attach_photopea_output(self.generated_image.background)
+                self.photopea.attach_photopea_output(self.generated_image)
 
             with gr.Accordion(
                 label="Open New Canvas", visible=False
@@ -368,13 +396,23 @@ class ControlNetUiGroup(object):
                 self.open_new_canvas_button = ToolButton(
                     value=ControlNetUiGroup.open_symbol,
                     elem_id=f"{elem_id_tabname}_{tabname}_controlnet_open_new_canvas_button",
-                    elem_classes=["cnet-toolbutton"],
                     tooltip=ControlNetUiGroup.tooltips[ControlNetUiGroup.open_symbol],
+                )
+                self.webcam_enable = ToolButton(
+                    value=ControlNetUiGroup.camera_symbol,
+                    elem_id=f"{elem_id_tabname}_{tabname}_controlnet_webcam_enable",
+                    tooltip=ControlNetUiGroup.tooltips[ControlNetUiGroup.camera_symbol],
+                )
+                self.webcam_mirror = ToolButton(
+                    value=ControlNetUiGroup.reverse_symbol,
+                    elem_id=f"{elem_id_tabname}_{tabname}_controlnet_webcam_mirror",
+                    tooltip=ControlNetUiGroup.tooltips[
+                        ControlNetUiGroup.reverse_symbol
+                    ],
                 )
                 self.send_dimen_button = ToolButton(
                     value=ControlNetUiGroup.tossup_symbol,
                     elem_id=f"{elem_id_tabname}_{tabname}_controlnet_send_dimen_button",
-                    elem_classes=["cnet-toolbutton"],
                     tooltip=ControlNetUiGroup.tooltips[ControlNetUiGroup.tossup_symbol],
                 )
 
@@ -422,6 +460,13 @@ class ControlNetUiGroup(object):
             else:
                 self.upload_independent_img_in_img2img = None
 
+        with gr.Row():
+            self.union_control_type = gr.Textbox(
+                label="Union Control Type",
+                value=ControlNetUnionControlType.UNKNOWN.value,
+                visible=False,
+            )
+
         with gr.Row(elem_classes=["controlnet_control_type", "controlnet_row"]):
             self.type_filter = gr.Radio(
                 global_state.get_all_preprocessor_tags(),
@@ -442,7 +487,7 @@ class ControlNetUiGroup(object):
                 value=ControlNetUiGroup.trigger_symbol,
                 visible=not self.is_img2img,
                 elem_id=f"{elem_id_tabname}_{tabname}_controlnet_trigger_preprocessor",
-                elem_classes=["cnet-run-preprocessor", "cnet-toolbutton"],
+                elem_classes=["cnet-run-preprocessor"],
                 tooltip=ControlNetUiGroup.tooltips[ControlNetUiGroup.trigger_symbol],
             )
             self.model = gr.Dropdown(
@@ -454,7 +499,6 @@ class ControlNetUiGroup(object):
             self.refresh_models = ToolButton(
                 value=ControlNetUiGroup.refresh_symbol,
                 elem_id=f"{elem_id_tabname}_{tabname}_controlnet_refresh_models",
-                elem_classes=["cnet-toolbutton"],
                 tooltip=ControlNetUiGroup.tooltips[ControlNetUiGroup.refresh_symbol],
             )
 
@@ -468,22 +512,24 @@ class ControlNetUiGroup(object):
                 elem_id=f"{elem_id_tabname}_{tabname}_controlnet_control_weight_slider",
                 elem_classes="controlnet_control_weight_slider",
             )
-            self.timestep_range = RangeSlider(
-                label='Timestep Range',
-                minimum=0,
+            self.guidance_start = gr.Slider(
+                label="Starting Control Step",
+                value=self.default_unit.guidance_start,
+                minimum=0.0,
                 maximum=1.0,
-                value=(self.default_unit.guidance_start, self.default_unit.guidance_end),
-                elem_id=f"{elem_id_tabname}_{tabname}_controlnet_control_step_slider",
-                elem_classes="controlnet_control_step_slider",
+                interactive=True,
+                elem_id=f"{elem_id_tabname}_{tabname}_controlnet_start_control_step_slider",
+                elem_classes="controlnet_start_control_step_slider",
             )
-            self.guidance_start = gr.State(self.default_unit.guidance_start)
-            self.guidance_end = gr.State(self.default_unit.guidance_end)
-
-        self.timestep_range.change(
-            lambda x: (x[0], x[1]),
-            inputs=[self.timestep_range],
-            outputs=[self.guidance_start, self.guidance_end]
-        )
+            self.guidance_end = gr.Slider(
+                label="Ending Control Step",
+                value=self.default_unit.guidance_end,
+                minimum=0.0,
+                maximum=1.0,
+                interactive=True,
+                elem_id=f"{elem_id_tabname}_{tabname}_controlnet_ending_control_step_slider",
+                elem_classes="controlnet_ending_control_step_slider",
+            )
 
         # advanced options
         with gr.Column(visible=False) as self.advanced:
@@ -515,14 +561,68 @@ class ControlNetUiGroup(object):
                 elem_id=f"{elem_id_tabname}_{tabname}_controlnet_threshold_B_slider",
             )
 
-        self.control_mode = gr.Radio(
-            choices=[e.value for e in external_code.ControlMode],
-            value=self.default_unit.control_mode.value,
-            label="Control Mode",
-            elem_id=f"{elem_id_tabname}_{tabname}_controlnet_control_mode_radio",
-            elem_classes="controlnet_control_mode_radio",
+        with gr.Row(elem_classes=["controlnet_extra_control", "controlnet_row"]):
+            self.control_mode = gr.Radio(
+                choices=[e.value for e in external_code.ControlMode],
+                value=self.default_unit.control_mode.value,
+                label="Control Mode",
+                elem_id=f"{elem_id_tabname}_{tabname}_controlnet_control_mode_radio",
+                elem_classes="controlnet_control_mode_radio",
+            )
+            self.ipa_block_weight_selector = gr.Dropdown(
+                choices=list(external_code.ipa_block_weight_presets.keys()),
+                label="[SDXL] IP-A Block Weights",
+                value=list(external_code.ipa_block_weight_presets.keys())[0],
+                elem_id=f"{elem_id_tabname}_{tabname}_ipa_block_weight",
+                allow_custom_value=False,
+                visible=False,
+            )
+            self.ipa_block_weight = gr.Textbox(
+                label="Weights",
+                visible=False,
+                value="",
+                placeholder="Preset or custom 11XL weights, e.g.: 0,0,0,0, 0.5, 1,1,1,1,1,1",
+            )
+            self.ipa_block_weight_save_button = ToolButton(
+                value="\U0001f4be",
+                elem_classes=["cnet-ipa-preset-save"],
+                tooltip="Save Custom Preset",
+                visible=False,
+            )                                               
+            
+        IPA_CW_PATH = os.path.join("tmp", "ipa_custom_block_weight.txt")
+        def toggle_ipa_controlls(choice):
+            if choice == "IP-Adapter":
+                return gr.update(visible=True)
+            else:
+                return gr.update(visible=False)
+                
+        def handle_dropdown_selection(alias):
+            if "Custom" not in alias:
+                return external_code.ipa_block_weight_presets.get(alias, "")
+            else:
+                if os.path.exists(IPA_CW_PATH):
+                    with open(IPA_CW_PATH, "r") as file:
+                        return file.readline().strip()
+                else:
+                    return ""
+                    
+        def fn_save_ipa_custom(value):
+            with open(IPA_CW_PATH, "w") as file:
+                file.write(value)
+            return gr.Dropdown.update(value=list(external_code.ipa_block_weight_presets.keys())[-1])
+                
+        self.type_filter.change(toggle_ipa_controlls, inputs=self.type_filter, outputs=self.ipa_block_weight)
+        self.type_filter.change(toggle_ipa_controlls, inputs=self.type_filter, outputs=self.ipa_block_weight_selector)
+        self.type_filter.change(toggle_ipa_controlls, inputs=self.type_filter, outputs=self.ipa_block_weight_save_button)                                                                                                                    
+        self.ipa_block_weight_selector.change(handle_dropdown_selection,inputs=self.ipa_block_weight_selector,outputs=self.ipa_block_weight)
+        self.ipa_block_weight_save_button.click(
+            fn=fn_save_ipa_custom,
+            inputs=self.ipa_block_weight,
+            outputs=self.ipa_block_weight_selector,
+            show_progress=False,
         )
-
+            
         self.resize_mode = gr.Radio(
             choices=[e.value for e in external_code.ResizeMode],
             value=self.default_unit.resize_mode.value,
@@ -540,6 +640,18 @@ class ControlNetUiGroup(object):
             elem_classes="controlnet_hr_option_radio",
             visible=False,
         )
+        
+        # self.loopback = gr.Checkbox(
+        #     label="[Batch Loopback] Automatically send generated images to this ControlNet unit in batch generation",
+        #     value=self.default_unit.loopback,
+        #     elem_id=f"{elem_id_tabname}_{tabname}_controlnet_automatically_send_generated_images_checkbox",
+        #     elem_classes="controlnet_loopback_checkbox",
+        #     visible=False,
+        # )
+
+        self.preset_panel = ControlNetPresetUI(
+            id_prefix=f"{elem_id_tabname}_{tabname}_"
+        )
 
         self.batch_image_dir_state = gr.State("")
         self.output_dir_state = gr.State("")
@@ -548,18 +660,17 @@ class ControlNetUiGroup(object):
             self.use_preview_as_input,
             self.batch_image_dir,
             self.batch_mask_dir,
-            self.batch_input_gallery,
-            self.batch_mask_gallery,
-            self.generated_image.background,
-            self.mask_image.background,
-            self.mask_image.foreground,
+            self.batch_input_gallery.input_gallery,
+            self.batch_mask_gallery.input_gallery,
+            self.multi_inputs_gallery.input_gallery,
+            self.generated_image,
+            self.mask_image,
             self.hr_option,
             self.enabled,
             self.module,
             self.model,
             self.weight,
-            self.image.background,
-            self.image.foreground,
+            self.image,
             self.resize_mode,
             self.processor_res,
             self.threshold_a,
@@ -568,9 +679,17 @@ class ControlNetUiGroup(object):
             self.guidance_end,
             self.pixel_perfect,
             self.control_mode,
+            self.advanced_weighting,
+            self.ipa_block_weight,
         )
 
         unit = gr.State(self.default_unit)
+        def create_unit(*args):
+            return ControlNetUnit.from_dict({
+                k: v
+                for k, v in zip(vars(ControlNetUnit()).keys(), args)
+            })
+
         for comp in unit_args + (self.dummy_gradio_update_trigger,):
             event_subscribers = []
             if hasattr(comp, "edit"):
@@ -587,7 +706,7 @@ class ControlNetUiGroup(object):
 
             for event_subscriber in event_subscribers:
                 event_subscriber(
-                    fn=UiControlNetUnit, inputs=list(unit_args), outputs=unit
+                    fn=create_unit, inputs=list(unit_args), outputs=unit
                 )
 
         (
@@ -595,7 +714,7 @@ class ControlNetUiGroup(object):
             if self.is_img2img
             else ControlNetUiGroup.a1111_context.txt2img_submit_button
         ).click(
-            fn=UiControlNetUnit,
+            fn=create_unit,
             inputs=list(unit_args),
             outputs=unit,
             queue=False,
@@ -615,16 +734,39 @@ class ControlNetUiGroup(object):
                 else:
                     return round(num + (8 - rem))
 
-            if image is not None:
-                return closesteight(image.shape[1]), closesteight(image.shape[0])
+            if image:
+                interm = np.asarray(image.get("image"))
+                return closesteight(interm.shape[1]), closesteight(interm.shape[0])
             else:
                 return gr.Slider.update(), gr.Slider.update()
 
         self.send_dimen_button.click(
             fn=send_dimensions,
-            inputs=[self.image.background],
+            inputs=[self.image],
             outputs=[self.width_slider, self.height_slider],
             show_progress=False,
+        )
+
+    def register_webcam_toggle(self):
+        def webcam_toggle():
+            self.webcam_enabled = not self.webcam_enabled
+            return {
+                "value": None,
+                "source": "webcam" if self.webcam_enabled else "upload",
+                "__type__": "update",
+            }
+
+        self.webcam_enable.click(
+            webcam_toggle, inputs=None, outputs=self.image, show_progress=False
+        )
+
+    def register_webcam_mirror_toggle(self):
+        def webcam_mirror_toggle():
+            self.webcam_mirrored = not self.webcam_mirrored
+            return {"mirror_webcam": self.webcam_mirrored, "__type__": "update"}
+
+        self.webcam_mirror.click(
+            webcam_mirror_toggle, inputs=None, outputs=self.image, show_progress=False
         )
 
     def register_refresh_all_models(self):
@@ -725,18 +867,30 @@ class ControlNetUiGroup(object):
             show_progress=False,
         )
 
+    def register_union_control_type(self):
+        def filter_selected(k: str):
+            control_type = ControlNetUnionControlType.from_str(k)
+            logger.debug(f"Switch to union control type {control_type}")
+            return gr.update(value=control_type.value)
+
+        self.type_filter.change(
+            fn=filter_selected,
+            inputs=[self.type_filter],
+            outputs=[self.union_control_type],
+            show_progress=False,
+        )
+
     def register_run_annotator(self):
-        def run_annotator(image, mask, module, pres, pthr_a, pthr_b, t2i_w, t2i_h, pp, rm):
+        def run_annotator(image, module, pres, pthr_a, pthr_b, t2i_w, t2i_h, pp, rm):
             if image is None:
                 return (
-                    gr.update(visible=True),
-                    None,
+                    gr.update(value=None, visible=True),
                     gr.update(),
                     *self.openpose_editor.update(""),
                 )
 
-            img = HWC3(image)
-            mask = HWC3(mask)
+            img = HWC3(image["image"])
+            mask = HWC3(image["mask"])
 
             if not (mask > 5).any():
                 mask = None
@@ -790,8 +944,8 @@ class ControlNetUiGroup(object):
 
             result = external_code.visualize_inpaint_mask(result)
             return (
-                gr.update(visible=True),
-                result,
+                # Update to `generated_image`
+                gr.update(value=result, visible=True, interactive=False),
                 # preprocessor_preview
                 gr.update(value=True),
                 # openpose editor
@@ -801,8 +955,7 @@ class ControlNetUiGroup(object):
         self.trigger_preprocessor.click(
             fn=run_annotator,
             inputs=[
-                self.image.background,
-                self.image.foreground,
+                self.image,
                 self.module,
                 self.processor_res,
                 self.threshold_a,
@@ -813,8 +966,7 @@ class ControlNetUiGroup(object):
                 self.resize_mode,
             ],
             outputs=[
-                self.generated_image.block,
-                self.generated_image.background,
+                self.generated_image,
                 self.preprocessor_preview,
                 *self.openpose_editor.outputs(),
             ],
@@ -839,7 +991,7 @@ class ControlNetUiGroup(object):
             fn=shift_preview,
             inputs=[self.preprocessor_preview],
             outputs=[
-                self.generated_image.background,
+                self.generated_image,
                 self.generated_image_group,
                 self.use_preview_as_input,
                 self.openpose_editor.download_link,
@@ -850,27 +1002,27 @@ class ControlNetUiGroup(object):
 
     def register_create_canvas(self):
         self.open_new_canvas_button.click(
-            lambda: gr.update(visible=True),
+            lambda: gr.Accordion.update(visible=True),
             inputs=None,
             outputs=self.create_canvas,
             show_progress=False,
         )
         self.canvas_cancel_button.click(
-            lambda: gr.update(visible=False),
+            lambda: gr.Accordion.update(visible=False),
             inputs=None,
             outputs=self.create_canvas,
             show_progress=False,
         )
 
         def fn_canvas(h, w):
-            return np.zeros(shape=(h, w, 3), dtype=np.uint8), gr.update(
+            return np.zeros(shape=(h, w, 3), dtype=np.uint8), gr.Accordion.update(
                 visible=False
             )
 
         self.canvas_create_button.click(
             fn=fn_canvas,
             inputs=[self.canvas_height, self.canvas_width],
-            outputs=[self.image.background, self.create_canvas],
+            outputs=[self.image, self.create_canvas],
             show_progress=False,
         )
 
@@ -886,7 +1038,7 @@ class ControlNetUiGroup(object):
             fn_same_checked,
             inputs=self.upload_independent_img_in_img2img,
             outputs=[
-                self.image.background,
+                self.image,
                 self.batch_image_dir,
                 self.preprocessor_preview,
                 self.image_upload_panel,
@@ -911,20 +1063,41 @@ class ControlNetUiGroup(object):
         """Controls whether the upload mask input should be visible."""
         def on_checkbox_click(checked: bool, canvas_height: int, canvas_width: int):
             if not checked:
-                # Clear mask_image if unchecked.
-                return gr.update(visible=False), gr.update(value=None), gr.update(value=None, visible=False), \
-                        gr.update(visible=False), gr.update(value=None)
+                # Clear mask inputs if unchecked.
+                return (
+                    # Single mask upload.
+                    gr.update(visible=False),
+                    gr.update(value=None),
+                    # Batch mask upload dir.
+                    gr.update(value=None, visible=False),
+                    # Multi mask upload gallery.
+                    gr.update(visible=False),
+                    gr.update(value=None)
+                )
             else:
                 # Init an empty canvas the same size as the generation target.
                 empty_canvas = np.zeros(shape=(canvas_height, canvas_width, 3), dtype=np.uint8)
-                return gr.update(visible=True), gr.update(value=empty_canvas), gr.update(visible=True), \
-                        gr.update(visible=True), gr.update()
+                return (
+                    # Single mask upload.
+                    gr.update(visible=True),
+                    gr.update(value=empty_canvas),
+                    # Batch mask upload dir.
+                    gr.update(visible=True),
+                    # Multi mask upload gallery.
+                    gr.update(visible=True),
+                    gr.update(),
+                )
 
         self.mask_upload.change(
             fn=on_checkbox_click,
             inputs=[self.mask_upload, self.height_slider, self.width_slider],
-            outputs=[self.mask_image_group, self.mask_image.background, self.batch_mask_dir,
-                     self.batch_mask_gallery_group, self.batch_mask_gallery],
+            outputs=[
+                self.mask_image_group,
+                self.mask_image,
+                self.batch_mask_dir,
+                self.batch_mask_gallery.group,
+                self.batch_mask_gallery.input_gallery,
+            ],
             show_progress=False,
         )
 
@@ -1003,24 +1176,46 @@ class ControlNetUiGroup(object):
                 event_subscriber(
                     fn=clear_preview,
                     inputs=self.use_preview_as_input,
-                    outputs=[self.use_preview_as_input, self.generated_image.background],
+                    outputs=[self.use_preview_as_input, self.generated_image],
                     show_progress=False
                 )
+
+    def register_multi_images_upload(self):
+        """Register callbacks on merge tab multiple images upload."""
+        trigger_dict = dict(
+            fn=lambda n: gr.update(value=n + 1),
+            inputs=[self.dummy_gradio_update_trigger],
+            outputs=[self.dummy_gradio_update_trigger],
+        )
+        self.batch_input_gallery.register_callbacks(change_trigger=trigger_dict)
+        self.batch_mask_gallery.register_callbacks(change_trigger=trigger_dict)
+        self.multi_inputs_gallery.register_callbacks(change_trigger=trigger_dict)
 
     def register_core_callbacks(self):
         """Register core callbacks that only involves gradio components defined
         within this ui group."""
+        self.register_webcam_toggle()
+        self.register_webcam_mirror_toggle()
         self.register_refresh_all_models()
         self.register_build_sliders()
         self.register_shift_preview()
         self.register_create_canvas()
         self.register_clear_preview()
+        self.register_multi_images_upload()
         self.openpose_editor.register_callbacks(
             self.generated_image,
             self.use_preview_as_input,
             self.model,
         )
         assert self.type_filter is not None
+        self.preset_panel.register_callbacks(
+            self,
+            self.type_filter,
+            *[
+                getattr(self, key)
+                for key in external_code.ControlNetUnit.infotext_fields()
+            ],
+        )
         if self.is_img2img:
             self.register_img2img_same_input()
 
@@ -1063,7 +1258,8 @@ class ControlNetUiGroup(object):
             for input_tab, fn in (
                 (ui_group.upload_tab, simple_fn),
                 (ui_group.batch_tab, batch_fn),
-                (ui_group.merge_tab, merge_fn),
+                (ui_group.batch_upload_tab, batch_fn),
+                (ui_group.multi_inputs_upload_tab, merge_fn),
             ):
                 # Sync input_mode.
                 input_tab.select(

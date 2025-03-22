@@ -6,9 +6,14 @@ from fastapi import FastAPI
 import network
 import networks
 import lora  # noqa:F401
+import lora_patches
 import extra_networks_lora
 import ui_extra_networks_lora
 from modules import script_callbacks, ui_extra_networks, extra_networks, shared
+
+
+def unload():
+    networks.originals.undo()
 
 
 def before_ui():
@@ -16,8 +21,13 @@ def before_ui():
 
     networks.extra_network_lora = extra_networks_lora.ExtraNetworkLora()
     extra_networks.register_extra_network(networks.extra_network_lora)
+    extra_networks.register_extra_network_alias(networks.extra_network_lora, "lyco")
 
 
+networks.originals = lora_patches.LoraPatches()
+
+script_callbacks.on_model_loaded(networks.assign_network_names_to_compvis_modules)
+script_callbacks.on_script_unloaded(unload)
 script_callbacks.on_before_ui(before_ui)
 script_callbacks.on_infotext_pasted(networks.infotext_pasted)
 
@@ -27,7 +37,8 @@ shared.options_templates.update(shared.options_section(('extra_networks', "Extra
     "lora_preferred_name": shared.OptionInfo("Alias from file", "When adding to prompt, refer to Lora by", gr.Radio, {"choices": ["Alias from file", "Filename"]}),
     "lora_add_hashes_to_infotext": shared.OptionInfo(True, "Add Lora hashes to infotext"),
     "lora_bundled_ti_to_infotext": shared.OptionInfo(True, "Add Lora name as TI hashes for bundled Textual Inversion").info('"Add Textual Inversion hashes to infotext" needs to be enabled'),
-    "lora_filter_disabled": shared.OptionInfo(True, "Always show all networks on the Lora page").info("otherwise, those detected as for incompatible version of Stable Diffusion will be hidden"),
+    "lora_show_all": shared.OptionInfo(False, "Always show all networks on the Lora page").info("otherwise, those detected as for incompatible version of Stable Diffusion will be hidden"),
+    "lora_hide_unknown_for_versions": shared.OptionInfo([], "Hide networks of unknown versions for model versions", gr.CheckboxGroup, {"choices": ["SD1", "SD2", "SDXL"]}),
     "lora_in_memory_limit": shared.OptionInfo(0, "Number of Lora networks to keep cached in memory", gr.Number, {"precision": 0}),
     "lora_not_found_warning_console": shared.OptionInfo(False, "Lora not found warning in console"),
     "lora_not_found_gradio_warning": shared.OptionInfo(False, "Lora not found warning popup in webui"),
@@ -87,3 +98,5 @@ def infotext_pasted(infotext, d):
 
 
 script_callbacks.on_infotext_pasted(infotext_pasted)
+
+shared.opts.onchange("lora_in_memory_limit", networks.purge_networks_from_memory)

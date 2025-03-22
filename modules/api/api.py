@@ -17,17 +17,17 @@ from fastapi.encoders import jsonable_encoder
 from secrets import compare_digest
 
 import modules.shared as shared
-from modules import sd_samplers, deepbooru, images, scripts, ui, postprocessing, errors, restart, shared_items, script_callbacks, infotext_utils, sd_models, sd_schedulers
+from modules import sd_samplers, deepbooru, sd_hijack, images, scripts, ui, postprocessing, errors, restart, shared_items, script_callbacks, infotext_utils, sd_models, sd_schedulers
 from modules.api import models
 from modules.shared import opts
-from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img, process_images, process_extra_images
-import modules.textual_inversion.textual_inversion
-from modules.shared import cmd_opts
-
+from modules.processing import StableDiffusionProcessingTxt2Img, StableDiffusionProcessingImg2Img, process_images
+from modules.textual_inversion.textual_inversion import create_embedding, train_embedding
+from modules.hypernetworks.hypernetwork import create_hypernetwork, train_hypernetwork
 from PIL import PngImagePlugin
+from modules.sd_models_config import find_checkpoint_config_near_filename
 from modules.realesrgan_model import get_realesrgan_models
 from modules import devices
-from typing import Any, Union, get_origin, get_args
+from typing import Any
 import piexif
 import piexif.helper
 from contextlib import closing
@@ -207,7 +207,7 @@ class Api:
         self.router = APIRouter()
         self.app = app
         self.queue_lock = queue_lock
-        #api_middleware(self.app)  # FIXME: (legacy) this will have to be fixed
+        api_middleware(self.app)
         self.add_api_route("/sdapi/v1/txt2img", self.text2imgapi, methods=["POST"], response_model=models.TextToImageResponse)
         self.add_api_route("/sdapi/v1/img2img", self.img2imgapi, methods=["POST"], response_model=models.ImageToImageResponse)
         self.add_api_route("/sdapi/v1/extra-single-image", self.extras_single_image_api, methods=["POST"], response_model=models.ExtrasSingleImageResponse)
@@ -225,7 +225,7 @@ class Api:
         self.add_api_route("/sdapi/v1/upscalers", self.get_upscalers, methods=["GET"], response_model=list[models.UpscalerItem])
         self.add_api_route("/sdapi/v1/latent-upscale-modes", self.get_latent_upscale_modes, methods=["GET"], response_model=list[models.LatentUpscalerModeItem])
         self.add_api_route("/sdapi/v1/sd-models", self.get_sd_models, methods=["GET"], response_model=list[models.SDModelItem])
-        self.add_api_route("/sdapi/v1/sd-modules", self.get_sd_vaes_and_text_encoders, methods=["GET"], response_model=list[models.SDModuleItem])
+        self.add_api_route("/sdapi/v1/sd-vae", self.get_sd_vaes, methods=["GET"], response_model=list[models.SDVaeItem])
         self.add_api_route("/sdapi/v1/hypernetworks", self.get_hypernetworks, methods=["GET"], response_model=list[models.HypernetworkItem])
         self.add_api_route("/sdapi/v1/face-restorers", self.get_face_restorers, methods=["GET"], response_model=list[models.FaceRestorerItem])
         self.add_api_route("/sdapi/v1/realesrgan-models", self.get_realesrgan_models, methods=["GET"], response_model=list[models.RealesrganItem])
@@ -236,6 +236,8 @@ class Api:
         self.add_api_route("/sdapi/v1/refresh-vae", self.refresh_vae, methods=["POST"])
         self.add_api_route("/sdapi/v1/create/embedding", self.create_embedding, methods=["POST"], response_model=models.CreateResponse)
         self.add_api_route("/sdapi/v1/create/hypernetwork", self.create_hypernetwork, methods=["POST"], response_model=models.CreateResponse)
+        self.add_api_route("/sdapi/v1/train/embedding", self.train_embedding, methods=["POST"], response_model=models.TrainResponse)
+        self.add_api_route("/sdapi/v1/train/hypernetwork", self.train_hypernetwork, methods=["POST"], response_model=models.TrainResponse)
         self.add_api_route("/sdapi/v1/memory", self.get_memory, methods=["GET"], response_model=models.MemoryResponse)
         self.add_api_route("/sdapi/v1/unload-checkpoint", self.unloadapi, methods=["POST"])
         self.add_api_route("/sdapi/v1/reload-checkpoint", self.reloadapi, methods=["POST"])
@@ -266,10 +268,6 @@ class Api:
             img2img_script_runner.initialize_scripts(True)
         if not self.default_script_arg_img2img:
             self.default_script_arg_img2img = self.init_default_script_args(img2img_script_runner)
-
-        self.embedding_db = modules.textual_inversion.textual_inversion.EmbeddingDatabase()
-        self.embedding_db.add_embedding_dir(cmd_opts.embeddings_dir)
-        self.embedding_db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
 
 
 
@@ -377,24 +375,13 @@ class Api:
         set_fields = request.model_dump(exclude_unset=True) if hasattr(request, "request") else request.dict(exclude_unset=True)  # pydantic v1/v2 have different names for this
         params = infotext_utils.parse_generation_parameters(request.infotext)
 
-        def get_base_type(annotation):
-            origin = get_origin(annotation)
-            
-            if origin is Union:             # represents Optional
-                args = get_args(annotation) # filter out NoneType
-                non_none_args = [arg for arg in args if arg is not type(None)]
-                if len(non_none_args) == 1: # annotation was Optional[X]
-                    return non_none_args[0]
-
-            return annotation
-
         def get_field_value(field, params):
             value = field.function(params) if field.function else params.get(field.label)
             if value is None:
                 return None
 
             if field.api in request.__fields__:
-                target_type = get_base_type(request.__fields__[field.api].annotation) # extract type from Optional[X]
+                target_type = request.__fields__[field.api].type_
             else:
                 target_type = type(field.component.value)
 
@@ -493,13 +480,12 @@ class Api:
                     else:
                         p.script_args = tuple(script_args) # Need to pass args as tuple here
                         processed = process_images(p)
-                    process_extra_images(processed)
                     finish_task(task_id)
                 finally:
                     shared.state.end()
                     shared.total_tqdm.clear()
 
-        b64images = list(map(encode_pil_to_base64, processed.images + processed.extra_images)) if send_images else []
+        b64images = list(map(encode_pil_to_base64, processed.images)) if send_images else []
 
         return models.TextToImageResponse(images=b64images, parameters=vars(txt2imgreq), info=processed.js())
 
@@ -565,13 +551,12 @@ class Api:
                     else:
                         p.script_args = tuple(script_args) # Need to pass args as tuple here
                         processed = process_images(p)
-                    process_extra_images(processed)
                     finish_task(task_id)
                 finally:
                     shared.state.end()
                     shared.total_tqdm.clear()
 
-        b64images = list(map(encode_pil_to_base64, processed.images + processed.extra_images)) if send_images else []
+        b64images = list(map(encode_pil_to_base64, processed.images)) if send_images else []
 
         if not img2imgreq.include_init_images:
             img2imgreq.init_images = None
@@ -680,12 +665,26 @@ class Api:
         shared.state.skip()
 
     def get_config(self):
-        from modules.sysinfo import get_config
-        return get_config()
+        options = {}
+        for key in shared.opts.data.keys():
+            metadata = shared.opts.data_labels.get(key)
+            if(metadata is not None):
+                options.update({key: shared.opts.data.get(key, shared.opts.data_labels.get(key).default)})
+            else:
+                options.update({key: shared.opts.data.get(key, None)})
+
+        return options
 
     def set_config(self, req: dict[str, Any]):
-        from modules.sysinfo import set_config
-        set_config(req)
+        checkpoint_name = req.get("sd_model_checkpoint", None)
+        if checkpoint_name is not None and checkpoint_name not in sd_models.checkpoint_aliases:
+            raise RuntimeError(f"model {checkpoint_name!r} not found")
+
+        for k, v in req.items():
+            shared.opts.set(k, v, is_api=True)
+
+        shared.opts.save(shared.config_filename)
+        return
 
     def get_cmd_flags(self):
         return vars(shared.cmd_opts)
@@ -726,11 +725,11 @@ class Api:
 
     def get_sd_models(self):
         import modules.sd_models as sd_models
-        return [{"title": x.title, "model_name": x.model_name, "hash": x.shorthash, "sha256": x.sha256, "filename": x.filename, "config": getattr(x, 'config', None)} for x in sd_models.checkpoints_list.values()]
+        return [{"title": x.title, "model_name": x.model_name, "hash": x.shorthash, "sha256": x.sha256, "filename": x.filename, "config": find_checkpoint_config_near_filename(x)} for x in sd_models.checkpoints_list.values()]
 
-    def get_sd_vaes_and_text_encoders(self):
-        from modules_forge.main_entry import module_list
-        return [{"model_name": x, "filename": module_list[x]} for x in module_list.keys()]
+    def get_sd_vaes(self):
+        import modules.sd_vae as sd_vae
+        return [{"model_name": x, "filename": sd_vae.vae_dict[x]} for x in sd_vae.vae_dict.keys()]
 
     def get_hypernetworks(self):
         return [{"name": name, "path": shared.hypernetworks[name]} for name in shared.hypernetworks]
@@ -750,6 +749,8 @@ class Api:
         return styleList
 
     def get_embeddings(self):
+        db = sd_hijack.model_hijack.embedding_db
+
         def convert_embedding(embedding):
             return {
                 "step": embedding.step,
@@ -763,13 +764,13 @@ class Api:
             return {embedding.name: convert_embedding(embedding) for embedding in embeddings.values()}
 
         return {
-            "loaded": convert_embeddings(self.embedding_db.word_embeddings),
-            "skipped": convert_embeddings(self.embedding_db.skipped_embeddings),
+            "loaded": convert_embeddings(db.word_embeddings),
+            "skipped": convert_embeddings(db.skipped_embeddings),
         }
 
     def refresh_embeddings(self):
         with self.queue_lock:
-            self.embedding_db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False)
+            sd_hijack.model_hijack.embedding_db.load_textual_inversion_embeddings(force_reload=True)
 
     def refresh_checkpoints(self):
         with self.queue_lock:
@@ -782,13 +783,14 @@ class Api:
     def create_embedding(self, args: dict):
         try:
             shared.state.begin(job="create_embedding")
-            filename = modules.textual_inversion.textual_inversion.create_embedding(**args) # create empty embedding
-            self.embedding_db.load_textual_inversion_embeddings(force_reload=True, sync_with_sd_model=False) # reload embeddings so new one can be immediately used
+            filename = create_embedding(**args) # create empty embedding
+            sd_hijack.model_hijack.embedding_db.load_textual_inversion_embeddings() # reload embeddings so new one can be immediately used
             return models.CreateResponse(info=f"create embedding filename: {filename}")
         except AssertionError as e:
             return models.TrainResponse(info=f"create embedding error: {e}")
         finally:
             shared.state.end()
+
 
     def create_hypernetwork(self, args: dict):
         try:
@@ -797,6 +799,52 @@ class Api:
             return models.CreateResponse(info=f"create hypernetwork filename: {filename}")
         except AssertionError as e:
             return models.TrainResponse(info=f"create hypernetwork error: {e}")
+        finally:
+            shared.state.end()
+
+    def train_embedding(self, args: dict):
+        try:
+            shared.state.begin(job="train_embedding")
+            apply_optimizations = shared.opts.training_xattention_optimizations
+            error = None
+            filename = ''
+            if not apply_optimizations:
+                sd_hijack.undo_optimizations()
+            try:
+                embedding, filename = train_embedding(**args) # can take a long time to complete
+            except Exception as e:
+                error = e
+            finally:
+                if not apply_optimizations:
+                    sd_hijack.apply_optimizations()
+            return models.TrainResponse(info=f"train embedding complete: filename: {filename} error: {error}")
+        except Exception as msg:
+            return models.TrainResponse(info=f"train embedding error: {msg}")
+        finally:
+            shared.state.end()
+
+    def train_hypernetwork(self, args: dict):
+        try:
+            shared.state.begin(job="train_hypernetwork")
+            shared.loaded_hypernetworks = []
+            apply_optimizations = shared.opts.training_xattention_optimizations
+            error = None
+            filename = ''
+            if not apply_optimizations:
+                sd_hijack.undo_optimizations()
+            try:
+                hypernetwork, filename = train_hypernetwork(**args)
+            except Exception as e:
+                error = e
+            finally:
+                shared.sd_model.cond_stage_model.to(devices.device)
+                shared.sd_model.first_stage_model.to(devices.device)
+                if not apply_optimizations:
+                    sd_hijack.apply_optimizations()
+                shared.state.end()
+            return models.TrainResponse(info=f"train embedding complete: filename: {filename} error: {error}")
+        except Exception as exc:
+            return models.TrainResponse(info=f"train embedding error: {exc}")
         finally:
             shared.state.end()
 

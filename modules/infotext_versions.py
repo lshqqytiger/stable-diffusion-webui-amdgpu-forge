@@ -44,3 +44,4 @@ def backcompat(d):
 
     if ver < v180 and d.get('Refiner'):
         d["Refiner switch by sampling steps"] = True
+

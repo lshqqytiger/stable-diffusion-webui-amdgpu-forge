@@ -56,7 +56,11 @@ class OptionInfo:
     def needs_reload_ui(self):
         self.comment_after += " <span class='info'>(requires Reload UI)</span>"
         return self
-
+    
+    def encode(self, value):
+        if isinstance(value, list) and all(isinstance(x, (int, float)) for x in value):
+            return json.dumps(value)
+        return value
 
 class OptionHTML(OptionInfo):
     def __init__(self, text):
@@ -183,7 +187,13 @@ class Options:
         assert not cmd_opts.freeze_settings, "saving settings is disabled"
 
         with open(filename, "w", encoding="utf8") as file:
-            json.dump(self.data, file, indent=4, ensure_ascii=False)
+            encoded_data = {}
+            for k, v in self.data.items():
+                if k in ['ays_custom_sigmas', 'reforge_ays_custom_sigmas']:
+                    encoded_data[k] = self.data_labels[k].encode(v)
+                else:
+                    encoded_data[k] = v
+            json.dump(encoded_data, file, indent=4, ensure_ascii=False)
 
     def same_type(self, x, y):
         if x is None or y is None:
@@ -194,10 +204,23 @@ class Options:
 
         return type_x == type_y
 
+    def _parse_value(self, key, value):
+        info = self.data_labels.get(key)
+        if info and isinstance(info.default, list) and isinstance(value, str):
+            if key in ['ays_custom_sigmas', 'reforge_ays_custom_sigmas']:  # Only parse these specific settings
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    return [float(x.strip()) for x in value.strip('[]').split(',')]
+        return value
+
     def load(self, filename):
         try:
             with open(filename, "r", encoding="utf8") as file:
                 self.data = json.load(file)
+            
+            # Parse values
+            self.data = {k: self._parse_value(k, v) for k, v in self.data.items()}
         except FileNotFoundError:
             self.data = {}
         except Exception:
@@ -242,7 +265,6 @@ class Options:
         for item in self.data_labels.values():
             if item.section[0] is None:
                 continue
-
             category = categories.mapping.get(item.category_id)
             category = "Uncategorized" if category is None else category.label
             if category not in item_categories:

@@ -1,6 +1,7 @@
+#taken from https://github.com/TencentARC/T2I-Adapter
+#taken from https://github.com/TencentARC/T2I-Adapter
 import torch
 import torch.nn as nn
-
 from collections import OrderedDict
 
 
@@ -153,7 +154,13 @@ class Adapter(nn.Module):
                 features.append(None)
             features.append(x)
 
-        return features
+        features = features[::-1]
+
+        if self.xl:
+            return {"input": features[1:], "middle": features[:1]}
+        else:
+            return {"input": features}
+
 
 
 class LayerNorm(nn.LayerNorm):
@@ -274,9 +281,9 @@ class Adapter_light(nn.Module):
 
         for i in range(len(channels)):
             if i == 0:
-                self.body.append(extractor(in_c=cin, inter_c=channels[i] // 4, out_c=channels[i], nums_rb=nums_rb, down=False))
+                self.body.append(extractor(in_c=cin, inter_c=channels[i]//4, out_c=channels[i], nums_rb=nums_rb, down=False))
             else:
-                self.body.append(extractor(in_c=channels[i - 1], inter_c=channels[i] // 4, out_c=channels[i], nums_rb=nums_rb, down=True))
+                self.body.append(extractor(in_c=channels[i-1], inter_c=channels[i]//4, out_c=channels[i], nums_rb=nums_rb, down=True))
         self.body = nn.ModuleList(self.body)
 
     def forward(self, x):
@@ -290,4 +297,4 @@ class Adapter_light(nn.Module):
             features.append(None)
             features.append(x)
 
-        return features
+        return {"input": features[::-1]}

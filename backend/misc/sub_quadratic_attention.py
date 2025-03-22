@@ -14,6 +14,7 @@ import torch
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
 import math
+import logging
 
 try:
     from typing import Optional, NamedTuple, List, Protocol
@@ -21,7 +22,6 @@ except ImportError:
     from typing import Optional, NamedTuple, List
     from typing_extensions import Protocol
 
-from torch import Tensor
 from typing import List
 
 from backend import memory_management
@@ -178,7 +178,7 @@ def _get_attention_scores_no_kv_chunking(
         del attn_scores
     except memory_management.OOM_EXCEPTION:
         print("ran out of memory while running softmax in  _get_attention_scores_no_kv_chunking, trying slower in place softmax instead")
-        attn_scores -= attn_scores.max(dim=-1, keepdim=True).values
+        attn_scores -= attn_scores.max(dim=-1, keepdim=True).values # noqa: F821 attn_scores is not defined
         torch.exp(attn_scores, out=attn_scores)
         summed = torch.sum(attn_scores, dim=-1, keepdim=True)
         attn_scores /= summed
@@ -242,6 +242,8 @@ def efficient_dot_product_attention(
     def get_mask_chunk(chunk_idx: int) -> Tensor:
         if mask is None:
             return None
+        if mask.shape[1] == 1:
+            return mask
         chunk = min(query_chunk_size, q_tokens)
         return mask[:, chunk_idx:chunk_idx + chunk]
 

@@ -13,6 +13,7 @@ main_req_file = repo_root / "requirements.txt"
 
 
 def comparable_version(version: str) -> Tuple:
+    # return tuple(version.split("."))
     return tuple(map(int, version.split(".")))
 
 

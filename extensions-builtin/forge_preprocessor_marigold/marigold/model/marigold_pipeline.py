@@ -221,7 +221,7 @@ class MarigoldPipeline(nn.Module):
         else:
             depth_latent = torch.randn(rgb_latent.shape, device=device)  # [B, 4, h, w]
 
-        # Expand text embeding for batch
+        # Expand text embedding for batch
         batch_empty_text_embed = self.empty_text_embed.repeat(
             (rgb_latent.shape[0], 1, 1)
         ).to(device=device, dtype=precision)  # [B, 2, 1024]

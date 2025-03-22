@@ -2,12 +2,21 @@
 
 @import url('webui-assets/css/sourcesanspro.css');
 
+
+/* temporary fix to hide gradio crop tool until it's fixed https://github.com/gradio-app/gradio/issues/3810 */
+
+div.gradio-image button[aria-label="Edit"] {
+    display: none;
+}
+
+
 /* general gradio fixes */
 
 :root, .dark{
     --checkbox-label-gap: 0.25em 0.1em;
     --section-header-text-size: 12pt;
     --block-background-fill: transparent;
+
 }
 
 .block.padded:not(.gradio-accordion) {
@@ -128,10 +137,6 @@ div.gradio-html.min{
     background: var(--input-background-fill);
 }
 
-.gradio-gallery > button.preview{
-    width: 100%;
-}
-
 .gradio-container .prose a, .gradio-container .prose a:visited{
     color: unset;
     text-decoration: none;
@@ -140,15 +145,6 @@ div.gradio-html.min{
 a{
     font-weight: bold;
     cursor: pointer;
-}
-
-.upload-container {
-    width: 100%;
-    max-width: 100%;
-}
-
-.layer-wrap > ul {
-    background: var(--background-fill-primary) !important;
 }
 
 /* gradio 3.39 puts a lot of overflow: hidden all over the place for an unknown reason. */
@@ -395,7 +391,14 @@ div#extras_scale_to_tab div.form{
     flex-direction: row;
 }
 
-.image-buttons{
+#img2img_sketch, #img2maskimg, #inpaint_sketch {
+    overflow: overlay !important;
+    resize: auto;
+    background: var(--panel-background-fill);
+    z-index: 5;
+}
+
+.image-buttons > .form{
     justify-content: center;
 }
 
@@ -426,11 +429,11 @@ div.toprow-compact-tools{
 
 /* settings */
 #quicksettings {
-    --checkbox-label-padding: 6px 6px;
     align-items: end;
 }
 
 #quicksettings > div, #quicksettings > fieldset{
+    max-width: 36em;
     width: fit-content;
     flex: 0 1 fit-content;
     padding: 0;
@@ -438,30 +441,8 @@ div.toprow-compact-tools{
     box-shadow: none;
     background: none;
 }
-
-#quicksettings > div.model_selection{
-    min-width: 20em !important;
-}
-
-#quicksettings > div.model_selection input{
-    margin-left: 2% !important; /* override the margin set for subdued */
-    width: 100%;
-}
-
-#quicksettings .icon-wrap {
-    margin-right: -4% !important;
-    background-color: var(--background-fill-secondary);
-}
-
-#quicksettings > div.model_selection li{
-    overflow-x: visible !important;
-    width: 100% !important; /* Set size to max element */
-}
-
-#quicksettings .subdued{
-    display: block;
-    margin-left: auto;
-    width: 30px;
+#quicksettings > div.gradio-dropdown{
+    min-width: 24em !important;
 }
 
 #settings{
@@ -774,7 +755,6 @@ table.popup-table .link{
     top: 0px;
     left: 0px;
     border: 2px solid red;
-    margin: -2px;
     background: rgba(255, 0, 0, 0.3);
     z-index: 900;
     pointer-events: none;
@@ -1118,9 +1098,9 @@ footer {
     height:100%;
 }
 
-.edit-user-metadata {
+div.block.gradio-box.edit-user-metadata {
     width: 56em;
-    background: var(--body-background-fill) !important;
+    background: var(--body-background-fill);
     padding: 2em !important;
 }
 
@@ -1154,10 +1134,14 @@ footer {
     margin-top: 1.5em;
 }
 
-.popup-dialog {
+div.block.gradio-box.popup-dialog, .popup-dialog {
     width: 56em;
-    background: var(--body-background-fill) !important;
+    background: var(--body-background-fill);
     padding: 2em !important;
+}
+
+div.block.gradio-box.popup-dialog > div:last-child, .popup-dialog > div:last-child{
+    margin-top: 1em;
 }
 
 div.block.input-accordion{
@@ -1680,26 +1664,4 @@ body.resizing .resize-handle {
 .extra-network-tree .tree-list-content:hover .button-row {
     visibility: visible;
     width: auto;
-}
-
-.prompt textarea[disabled] {
-    opacity: 0.25 !important;
-}
-
-#quicksettings .gradio-slider span {
-    padding-right: 5px;
-}
-
-.forge_space_label{
-    padding: 10px;
-    min-width: 60% !important;
-    margin: 1px;
-    border-width: 1px;
-    border-radius: 8px;
-    border-style: solid;
-    border-color: #6f6f6f;
-}
-
-.forge_space_btn{
-    min-width: 0 !important;
 }

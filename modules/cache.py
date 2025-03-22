@@ -13,12 +13,9 @@ cache_dir = os.environ.get('SD_WEBUI_CACHE_DIR', os.path.join(data_path, "cache"
 caches = {}
 cache_lock = threading.Lock()
 
-
 def dump_cache():
     """old function for dumping cache to disk; does nothing since diskcache."""
-
     pass
-
 
 def make_cache(subsection: str) -> diskcache.Cache:
     return diskcache.Cache(
@@ -26,7 +23,6 @@ def make_cache(subsection: str) -> diskcache.Cache:
         size_limit=2**32,  # 4 GB, culling oldest first
         disk_min_file_size=2**18,  # keep up to 256KB in Sqlite
     )
-
 
 def convert_old_cached_data():
     try:
@@ -47,7 +43,6 @@ def convert_old_cached_data():
             if cache_obj is None:
                 cache_obj = make_cache(subsection)
                 caches[subsection] = cache_obj
-
             for key, value in keyvalues.items():
                 cache_obj[key] = value
                 progress.update(1)

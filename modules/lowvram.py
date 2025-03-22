@@ -1,5 +1,4 @@
 from collections import namedtuple
-
 import torch
 from modules import devices, shared
 
@@ -7,6 +6,7 @@ module_in_gpu = None
 cpu = torch.device("cpu")
 
 ModuleWithParent = namedtuple('ModuleWithParent', ['module', 'parent'], defaults=['None'])
+
 
 def send_everything_to_cpu():
     return

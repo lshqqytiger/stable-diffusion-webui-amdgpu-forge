@@ -11,8 +11,6 @@ from modules.paths import data_path
 from modules import shared, ui_tempdir, script_callbacks, processing, infotext_versions, images, prompt_parser, errors
 from PIL import Image
 
-from modules_forge import main_entry
-
 sys.modules['modules.generation_parameters_copypaste'] = sys.modules[__name__]  # alias for old name
 
 re_param_code = r'\s*(\w[\w \-/]+):\s*("(?:\\.|[^\\"])+"|[^,]*)(?:,|$)'
@@ -76,38 +74,29 @@ def image_from_url_text(filedata):
     if filedata is None:
         return None
 
-    if isinstance(filedata, list):
-        if len(filedata) == 0:
-            return None
-
+    if type(filedata) == list and filedata and type(filedata[0]) == dict and filedata[0].get("is_file", False):
         filedata = filedata[0]
 
-    if isinstance(filedata, dict) and filedata.get("is_file", False):
-        filedata = filedata
-
-    filename = None
     if type(filedata) == dict and filedata.get("is_file", False):
         filename = filedata["name"]
-
-    elif isinstance(filedata, tuple) and len(filedata) == 2:  # gradio 4.16 sends images from gallery as a list of tuples
-        return filedata[0]
-
-    if filename:
         is_in_right_dir = ui_tempdir.check_tmp_file(shared.demo, filename)
         assert is_in_right_dir, 'trying to open image file outside of allowed directories'
 
         filename = filename.rsplit('?', 1)[0]
         return images.read(filename)
 
-    if isinstance(filedata, str):
-        if filedata.startswith("data:image/png;base64,"):
-            filedata = filedata[len("data:image/png;base64,"):]
+    if type(filedata) == list:
+        if len(filedata) == 0:
+            return None
 
-        filedata = base64.decodebytes(filedata.encode('utf-8'))
-        image = images.read(io.BytesIO(filedata))
-        return image
+        filedata = filedata[0]
 
-    return None
+    if filedata.startswith("data:image/png;base64,"):
+        filedata = filedata[len("data:image/png;base64,"):]
+
+    filedata = base64.decodebytes(filedata.encode('utf-8'))
+    image = images.read(io.BytesIO(filedata))
+    return image
 
 
 def add_paste_fields(tabname, init_img, fields, override_settings_component=None):
@@ -149,6 +138,8 @@ def register_paste_params_button(binding: ParamBinding):
 
 def connect_paste_params_buttons():
     for binding in registered_param_bindings:
+        if binding.tabname not in paste_fields:
+            continue
         destination_image_component = paste_fields[binding.tabname]["init_img"]
         fields = paste_fields[binding.tabname]["fields"]
         override_settings_component = binding.override_settings_component or paste_fields[binding.tabname]["override_settings_component"]
@@ -199,8 +190,6 @@ def send_image_and_dimensions(x):
         img = x
         if img.mode == 'RGBA':
             img = img.convert('RGB')
-    elif isinstance(x, list) and isinstance(x[0], tuple):
-        img = x[0][0]
     else:
         img = image_from_url_text(x)
         if img is not None and img.mode == 'RGBA':
@@ -282,26 +271,6 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
             negative_prompt += ("" if negative_prompt == "" else "\n") + line
         else:
             prompt += ("" if prompt == "" else "\n") + line
-
-    if 'Civitai' in lastline and 'FLUX' in lastline:
-        # Civitai really like to add random Clip skip to Flux metadata, where Clip skip is not a thing.
-        lastline = lastline.replace('Clip skip: 0, ', '')
-        lastline = lastline.replace('Clip skip: 1, ', '')
-        lastline = lastline.replace('Clip skip: 2, ', '')
-        lastline = lastline.replace('Clip skip: 3, ', '')
-        lastline = lastline.replace('Clip skip: 4, ', '')
-        lastline = lastline.replace('Clip skip: 5, ', '')
-        lastline = lastline.replace('Clip skip: 6, ', '')
-        lastline = lastline.replace('Clip skip: 7, ', '')
-        lastline = lastline.replace('Clip skip: 8, ', '')
-
-        # Civitai also add Sampler: Undefined
-        lastline = lastline.replace('Sampler: Undefined, ', 'Sampler: Euler, Schedule type: Simple, ')  # <- by lllyasviel, seem to give similar results to Civitai "Undefined" Sampler
-
-        # Civitai also confuse CFG scale and Distilled CFG Scale
-        lastline = lastline.replace('CFG scale: ', 'CFG scale: 1, Distilled CFG Scale: ')
-
-        print('Applied Forge Fix to broken Civitai Flux Meta.')
 
     for k, v in re_param.findall(lastline):
         try:
@@ -420,64 +389,11 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     for key in skip_fields:
         res.pop(key, None)
 
-    # basic check for same checkpoint using short name
-    checkpoint = res.get('Model', None)
-    if checkpoint is not None:
-        if checkpoint in shared.opts.sd_model_checkpoint:
-            res.pop('Model')
-
-    # VAE / TE
-    modules = []
-    hr_modules = []
-    vae = res.pop('VAE', None)  # old form
-    if vae:
-        modules = [vae]
-    else:
-        for key in res:
-            if key.startswith('Module '):
-                added = False
-                for knownmodule in main_entry.module_list.keys():
-                    filename, _ = os.path.splitext(knownmodule)
-                    if res[key] == filename:
-                        added = True
-                        modules.append(knownmodule)
-                        break
-                if not added:
-                    modules.append(res[key])   # so it shows in the override section (consistent with checkpoint and old vae)
-            elif key.startswith('Hires Module '):
-                for knownmodule in main_entry.module_list.keys():
-                    filename, _ = os.path.splitext(knownmodule)
-                    if res[key] == filename:
-                        hr_modules.append(knownmodule)
-                        break
-
-    if modules != []:
-        current_modules = shared.opts.forge_additional_modules
-        basename_modules = []
-        for m in current_modules:
-            basename_modules.append(os.path.basename(m))
-
-        if sorted(modules) != sorted(basename_modules):
-            res['VAE/TE'] = modules
-
-    # if 'Use same choices' was the selection for Hires VAE / Text Encoder, it will be the only Hires Module
-    # if the selection was empty, it will be the only Hires Module, saved as 'Built-in'
-    if 'Hires Module 1' in res:
-        if res['Hires Module 1'] == 'Use same choices':
-            hr_modules = ['Use same choices']
-        elif res['Hires Module 1'] == 'Built-in':
-            hr_modules = []
-
-        res['Hires VAE/TE'] = hr_modules
-    else:
-        # no Hires Module infotext, use default
-        res['Hires VAE/TE'] = ['Use same choices']
-
     return res
 
 
 infotext_to_setting_name_mapping = [
-    ('VAE/TE', 'forge_additional_modules'),
+
 ]
 """Mapping of infotext labels to setting names. Only left for backwards compatibility - use OptionInfo(..., infotext='...') instead.
 Example content:
@@ -489,7 +405,8 @@ infotext_to_setting_name_mapping = [
     ('Schedule type', 'k_sched_type'),
 ]
 """
-from ast import literal_eval
+
+
 def create_override_settings_dict(text_pairs):
     """creates processing's override_settings parameters from gradio's multiselect
 
@@ -502,9 +419,6 @@ def create_override_settings_dict(text_pairs):
 
     res = {}
 
-    if not text_pairs:
-        return res
-
     params = {}
     for pair in text_pairs:
         k, v = pair.split(":", maxsplit=1)
@@ -516,10 +430,6 @@ def create_override_settings_dict(text_pairs):
         value = params.get(param_name, None)
 
         if value is None:
-            continue
-
-        if setting_name == "forge_additional_modules":
-            res[setting_name] = literal_eval(value)
             continue
 
         res[setting_name] = shared.opts.cast_value(setting_name, value)
@@ -555,9 +465,8 @@ def get_override_settings(params, *, skip_fields=None):
         if v is None:
             continue
 
-        if setting_name in ["sd_model_checkpoint", "forge_additional_modules"]:
-            if shared.opts.disable_weights_auto_swap:
-                continue
+        if setting_name == "sd_model_checkpoint" and shared.opts.disable_weights_auto_swap:
+            continue
 
         v = shared.opts.cast_value(setting_name, v)
         current_value = getattr(shared.opts, setting_name, None)

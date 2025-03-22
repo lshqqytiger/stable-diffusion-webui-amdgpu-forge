@@ -9,18 +9,25 @@ from modules import shared, script_callbacks, masking, images
 from modules.ui_components import InputAccordion
 from modules.api.api import decode_base64_to_image
 import gradio as gr
+import time
 
 from lib_controlnet import global_state, external_code
-from lib_controlnet.external_code import ControlNetUnit
-from lib_controlnet.utils import align_dim_latent, set_numpy_seed, crop_and_resize_image, \
-    prepare_mask, judge_image_type
+from lib_controlnet.external_code import ControlNetUnit, InputMode
+from lib_controlnet.utils import (
+    align_dim_latent,
+    set_numpy_seed,
+    crop_and_resize_image,
+    prepare_mask,
+    judge_image_type,
+    try_unfold_unit,
+)
 from lib_controlnet.controlnet_ui.controlnet_ui_group import ControlNetUiGroup
 from lib_controlnet.controlnet_ui.photopea import Photopea
 from lib_controlnet.logging import logger
 from modules.processing import StableDiffusionProcessingImg2Img, StableDiffusionProcessingTxt2Img, \
     StableDiffusionProcessing
 from lib_controlnet.infotext import Infotext
-from modules_forge.utils import HWC3, numpy_to_pytorch
+from modules_forge.forge_util import HWC3, numpy_to_pytorch
 from lib_controlnet.enums import HiResFixOption
 from lib_controlnet.api import controlnet_api
 
@@ -53,6 +60,7 @@ class ControlNetCachedParameters:
         self.control_cond_for_hr_fix = None
         self.control_mask = None
         self.control_mask_for_hr_fix = None
+        self.advanced_weighting = None
 
 
 class ControlNetForForgeOfficial(scripts.Script):
@@ -104,9 +112,15 @@ class ControlNetForForgeOfficial(scripts.Script):
             ControlNetUnit.from_dict(unit) if isinstance(unit, dict) else unit
             for unit in units
         ]
+        units = [unit for unit in units if unit is not None]
         assert all(isinstance(unit, ControlNetUnit) for unit in units)
-        enabled_units = [x for x in units if x.enabled]
-        return enabled_units
+        return [
+            simple_unit
+            for unit in units
+            # Unfolds multi-inputs units.
+            for simple_unit in try_unfold_unit(unit)
+            if simple_unit.enabled
+        ]
 
     @staticmethod
     def try_crop_image_with_a1111_mask(
@@ -153,15 +167,15 @@ class ControlNetForForgeOfficial(scripts.Script):
     def get_input_data(self, p, unit, preprocessor, h, w):
         logger.info(f'ControlNet Input Mode: {unit.input_mode}')
         image_list = []
-        resize_mode = external_code.resize_mode_from_value(unit.resize_mode)
+        resize_mode = unit.resize_mode
 
-        if unit.input_mode == external_code.InputMode.MERGE:
+        if unit.input_mode == InputMode.MERGE:
             for idx, item in enumerate(unit.batch_input_gallery):
-                img_path = item[0]
+                img_path = item['name']
                 logger.info(f'Try to read image: {img_path}')
                 img = np.ascontiguousarray(cv2.imread(img_path)[:, :, ::-1]).copy()
                 mask = None
-                if unit.batch_mask_gallery is not None and len(unit.batch_mask_gallery) > 0:
+                if len(unit.batch_mask_gallery) > 0:
                     if len(unit.batch_mask_gallery) >= len(unit.batch_input_gallery):
                         mask_path = unit.batch_mask_gallery[idx]['name']
                     else:
@@ -169,7 +183,7 @@ class ControlNetForForgeOfficial(scripts.Script):
                     mask = np.ascontiguousarray(cv2.imread(mask_path)[:, :, ::-1]).copy()
                 if img is not None:
                     image_list.append([img, mask])
-        elif unit.input_mode == external_code.InputMode.BATCH:
+        elif unit.input_mode == InputMode.BATCH:
             image_list = []
             image_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
             batch_image_files = shared.listfiles(unit.batch_image_dir)
@@ -197,36 +211,30 @@ class ControlNetForForgeOfficial(scripts.Script):
 
             using_a1111_data = False
 
-            unit_image = unit.image
-            unit_image_fg = unit.image_fg[:, :, 3] if unit.image_fg is not None else None
-
             if unit.use_preview_as_input and unit.generated_image is not None:
                 image = unit.generated_image
             elif unit.image is None:
                 resize_mode = external_code.resize_mode_from_value(p.resize_mode)
                 image = HWC3(np.asarray(a1111_i2i_image))
                 using_a1111_data = True
-            elif (unit_image < 5).all() and (unit_image_fg > 5).any():
-                image = unit_image_fg
+            elif (unit.image['image'] < 5).all() and (unit.image['mask'] > 5).any():
+                image = unit.image['mask']
             else:
-                image = unit_image
+                image = unit.image['image']
 
             if not isinstance(image, np.ndarray):
                 raise ValueError("controlnet is enabled but no input image is given")
 
             image = HWC3(image)
 
-            unit_mask_image = unit.mask_image
-            unit_mask_image_fg = unit.mask_image_fg[:, :, 3] if unit.mask_image_fg is not None else None
-
-            if using_a1111_data:
+            if using_a1111_data and a1111_i2i_mask is not None:
                 mask = HWC3(np.asarray(a1111_i2i_mask)) if a1111_i2i_mask is not None else None
-            elif unit_mask_image_fg is not None and (unit_mask_image_fg > 5).any():
-                mask = unit_mask_image_fg
-            elif unit_mask_image is not None and (unit_mask_image > 5).any():
-                mask = unit_mask_image
-            elif unit_image_fg is not None and (unit_image_fg > 5).any():
-                mask = unit_image_fg
+            elif unit.mask_image is not None and (unit.mask_image['image'] > 5).any():
+                mask = unit.mask_image['image']
+            elif unit.mask_image is not None and (unit.mask_image['mask'] > 5).any():
+                mask = unit.mask_image['mask']
+            elif unit.image is not None and (unit.image['mask'] > 5).any():
+                mask = unit.image['mask']
             else:
                 mask = None
 
@@ -312,6 +320,21 @@ class ControlNetForForgeOfficial(scripts.Script):
             return tqdm(iterable) if use_tqdm else iterable
 
         for input_image, input_mask in optional_tqdm(input_list, len(input_list) > 1):
+            # Outpaint fix for ControlNet inpaint.
+            # Outpaint should have the expanded outpaint area masked.
+            if resize_mode == external_code.ResizeMode.OUTER_FIT and "Inpaint" in preprocessor.tags:
+                if input_mask is None:
+                    input_mask = np.zeros_like(input_image)
+                input_mask = crop_and_resize_image(
+                    input_mask,
+                    external_code.ResizeMode.OUTER_FIT, h, w,
+                    fill_border_with_255=True,
+                )
+                input_image = crop_and_resize_image(
+                    input_image,
+                    external_code.ResizeMode.OUTER_FIT, h, w,
+                    fill_border_with_255=False,
+                )
             if unit.pixel_perfect:
                 unit.processor_res = external_code.pixel_perfect_resolution(
                     input_image,
@@ -345,11 +368,11 @@ class ControlNetForForgeOfficial(scripts.Script):
                 break
 
         if has_high_res_fix:
-            hr_option = HiResFixOption.from_value(unit.hr_option)
+            hr_option = unit.hr_option
         else:
             hr_option = HiResFixOption.BOTH
 
-        alignment_indices = [i % len(preprocessor_outputs) for i in range(p.batch_size)]
+        alignment_indices = [i % len(preprocessor_outputs) for i in range(p.batch_size * p.n_iter)]
         def attach_extra_result_image(img: np.ndarray, is_high_res: bool = False):
             if (
                 (is_high_res and hr_option.high_res_enabled) or
@@ -436,7 +459,7 @@ class ControlNetForForgeOfficial(scripts.Script):
         )
 
         if has_high_res_fix:
-            hr_option = HiResFixOption.from_value(unit.hr_option)
+            hr_option = unit.hr_option
         else:
             hr_option = HiResFixOption.BOTH
 
@@ -449,10 +472,10 @@ class ControlNetForForgeOfficial(scripts.Script):
             return
 
         if is_hr_pass:
-            cond = params.control_cond_for_hr_fix
+            cond = torch.split(params.control_cond_for_hr_fix, p.batch_size)[p.iteration]
             mask = params.control_mask_for_hr_fix
         else:
-            cond = params.control_cond
+            cond = torch.split(params.control_cond, p.batch_size)[p.iteration]
             mask = params.control_mask
 
         kwargs.update(dict(
@@ -469,6 +492,7 @@ class ControlNetForForgeOfficial(scripts.Script):
         params.model.negative_advanced_weighting = None
         params.model.advanced_frame_weighting = None
         params.model.advanced_sigma_weighting = None
+        params.model.target_blocks = unit.ipa_block_weight
 
         soft_weighting = {
             'input': [0.09941396206337118, 0.12050177219802567, 0.14606275417942507, 0.17704576264172736,
@@ -500,11 +524,22 @@ class ControlNetForForgeOfficial(scripts.Script):
             params.model.positive_advanced_weighting = soft_weighting.copy()
             params.model.negative_advanced_weighting = soft_weighting.copy()
 
+        if unit.advanced_weighting is not None:
+            if params.model.positive_advanced_weighting is None:
+                logger.warn("advanced_weighting overwrite control_mode")
+            params.model.positive_advanced_weighting = unit.advanced_weighting
+
+        model_process_start_time = time.perf_counter()
         cond, mask = params.preprocessor.process_before_every_sampling(p, cond, mask, *args, **kwargs)
+        model_process_end_time =  time.perf_counter() - model_process_start_time
+        logger.debug(f"CN Preprocessor {params.preprocessor.name}: {model_process_end_time:.2f}s.")
 
         params.model.advanced_mask_weighting = mask
+        model_process_start_time = time.perf_counter()
 
         params.model.process_before_every_sampling(p, cond, mask, *args, **kwargs)
+        model_process_end_time =  time.perf_counter() - model_process_start_time
+        logger.debug(f"CN Model {type(params.model).__name__}: {model_process_end_time:.2f}s.")
 
         logger.info(f"ControlNet Method {params.preprocessor.name} patched.")
         return
@@ -587,6 +622,8 @@ def on_ui_settings():
         {"minimum": 1, "maximum": 10, "step": 1}, section=section))
     shared.opts.add_option("control_net_model_cache_size", shared.OptionInfo(
         5, "Model cache size (requires restart)", gr.Slider, {"minimum": 1, "maximum": 10, "step": 1}, section=section))
+    shared.opts.add_option("control_net_ipadapter_cache_size", shared.OptionInfo(
+        5, "IPAdapter cache size (requires restart)", gr.Slider, {"minimum": 1, "maximum": 10, "step": 1}, section=section))    
     shared.opts.add_option("control_net_no_detectmap", shared.OptionInfo(
         False, "Do not append detectmap to output", gr.Checkbox, {"interactive": True}, section=section))
     shared.opts.add_option("control_net_detectmap_autosaving", shared.OptionInfo(

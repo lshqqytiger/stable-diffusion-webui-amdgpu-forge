@@ -125,34 +125,43 @@ class IPAdapterPatcher(ControlModelPatcher):
         if "ip_adapter" not in model.keys() or len(model["ip_adapter"]) == 0:
             return None
 
-        o = IPAdapterPatcher(model)
-
         model_filename = Path(ckpt_path).name.lower()
+        o = IPAdapterPatcher(model, model_filename)
         if 'v2' in model_filename:
             o.faceid_v2 = True
             o.weight_v2 = True
 
         return o
 
-    def __init__(self, state_dict):
+    def __init__(self, state_dict, model_filename):
         super().__init__()
         self.ip_adapter = state_dict
+        self.model_filename = model_filename
         self.faceid_v2 = False
         self.weight_v2 = False
+        self.target_blocks= None,
         return
 
     def process_before_every_sampling(self, process, cond, mask, *args, **kwargs):
         unet = process.sd_model.forge_objects.unet
+        if self.positive_advanced_weighting is None:
+            weight = self.strength
+            cond["weight_type"] = "original"
+        else:
+            weight = self.positive_advanced_weighting
+            cond["weight_type"] = "advanced"
 
         unet = opIPAdapterApply(
             ipadapter=self.ip_adapter,
+            model_filename=self.model_filename,
             model=unet,
-            weight=self.strength,
+            weight=weight,
             start_at=self.start_percent,
             end_at=self.end_percent,
             faceid_v2=self.faceid_v2,
             weight_v2=self.weight_v2,
             attn_mask=mask.squeeze(1) if mask is not None else None,
+            target_blocks=self.target_blocks,
             **cond,
         )[0]
 

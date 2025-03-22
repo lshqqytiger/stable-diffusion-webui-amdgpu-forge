@@ -14,7 +14,7 @@ import shlex
 from functools import lru_cache
 from typing import NamedTuple
 from pathlib import Path
-
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 from modules import cmd_args, errors
 from modules.paths_internal import script_path, extensions_dir, extensions_builtin_dir
 from modules.timer import startup_timer
@@ -43,15 +43,9 @@ def check_python_version():
     minor = sys.version_info.minor
     micro = sys.version_info.micro
 
-    if is_windows:
-        supported_minors = [10]
-    else:
-        supported_minors = [7, 8, 9, 10, 11]
-
-    if not (major == 3 and minor in supported_minors):
-        import modules.errors
-
-        modules.errors.print_error_explanation(f"""
+    # Only show warning if Python version is < 3.7 or >= 3.14
+    if not (major == 3 and 7 <= minor <= 13):
+        errors.print_error_explanation(f"""
 INCOMPATIBLE PYTHON VERSION
 
 This program is tested with 3.10.6 Python, but you have {major}.{minor}.{micro}.
@@ -360,6 +354,66 @@ def requirements_met(requirements_file):
 
     return True
 
+def get_cuda_comp_cap():
+    """
+    Returns float of CUDA Compute Capability using nvidia-smi
+    Returns 0.0 on error
+    CUDA Compute Capability
+    ref https://developer.nvidia.com/cuda-gpus
+    ref https://en.wikipedia.org/wiki/CUDA
+    Blackwell consumer GPUs should return 12.0 data-center GPUs should return 10.0
+    """
+    try:
+        return max(map(float, subprocess.check_output(['nvidia-smi', '--query-gpu=compute_cap', '--format=noheader,csv'], text=True).splitlines()))
+    except Exception as _:
+        return 0.0
+
+def early_access_blackwell_wheels():
+    """For Blackwell GPUs or when using --nightly-builds flag, use Nightly PyTorch Wheels"""
+    cuda_cap = get_cuda_comp_cap()
+   
+    # Import args from ldm_patched if available, otherwise default to false
+    try:
+        from ldm_patched.modules.args_parser import args
+        use_nightly = args.nightly_builds
+    except:
+        use_nightly = False
+   
+    # Check if we should use nightly builds
+    # Either Blackwell GPU (always use) or Ampere/Ada GPU with nightly flag
+    should_use_nightly = (
+        os.environ.get('TORCH_INDEX_URL') is None and
+        sys.version_info.major == 3 and
+        sys.version_info.minor in (10, 11, 12, 13) and
+        (
+            cuda_cap >= 10.0 or  # Always use for Blackwell
+            (use_nightly and cuda_cap >= 8.0)  # Use for Ampere/Ada if flag is set
+        )
+    )
+   
+    if should_use_nightly:
+        if platform.system() == "Windows":
+            # Use latest nightly builds for all Python versions
+            base_cmd = "pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128"
+            
+            # Install triton nightly
+            triton_pkg = "triton-windows==3.3.0a0.post17"
+            
+            # Add additional packages for Python 3.12
+            if sys.version_info.minor == 12:
+                xformers_url = "https://huggingface.co/Panchovix/xformers-windows-blackwell2.0-nightly/resolve/main/xformers-0.0.30%2B9a2cd3ef.d20250321-cp312-cp312-win_amd64.whl"
+                flash_attn_url = "https://huggingface.co/Panchovix/flash-attentionv2-blackwell2.0-nightly/resolve/main/flash_attn-2.7.4.post1-cp312-cp312-win_amd64.whl"
+                sage_attn_url = "https://huggingface.co/Panchovix/sageattention2.1.1-blackwell2.0-windows-nightly/resolve/main/sageattention-2.1.1-cp312-cp312-win_amd64.whl"
+                
+                return f"{base_cmd} && pip install {triton_pkg} {xformers_url} {flash_attn_url} {sage_attn_url}"
+            else:
+                return f"{base_cmd} && pip install {triton_pkg}"
+        
+        elif platform.system() == "Linux":
+            return "pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu128"
+   
+    return None
+
 
 def prepare_environment():
     from modules import rocm
@@ -367,19 +421,19 @@ def prepare_environment():
     system = platform.system()
     nvidia_driver_found = False
     backend = "cuda"
-    torch_command = "pip install torch==2.3.1 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+    torch_command = "pip install torch==2.6.0 torchvision --extra-index-url https://download.pytorch.org/whl/cu124"
 
     if args.use_cpu_torch:
         backend = "cpu"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.3.1 torchvision",
+            "pip install torch==2.6.0 torchvision",
         )
     elif args.directml:
         backend = "directml"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.3.1 torchvision torch-directml",
+            "pip install torch torchvision torch-directml",
         )
         args.skip_python_version_check = True
     elif args.use_zluda:
@@ -412,11 +466,11 @@ def prepare_environment():
             print("NVIDIA driver was found.")
             backend = "cuda"
             torch_index_url = os.environ.get(
-                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu121"
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu124"
             )
             torch_command = os.environ.get(
                 "TORCH_COMMAND",
-                f"pip install torch==2.3.1 torchvision --extra-index-url {torch_index_url}",
+                f"pip install torch==2.6.0 torchvision --extra-index-url {torch_index_url}",
             )
         else:
             if rocm.is_installed:
@@ -426,19 +480,26 @@ def prepare_environment():
                 else:
                     backend = "rocm"
                     torch_index_url = os.environ.get(
-                        "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.0"
+                        "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.3"
                     )
                     torch_command = os.environ.get(
                         "TORCH_COMMAND",
-                        f"pip install torch==2.3.1 torchvision --index-url {torch_index_url}",
+                        f"pip install torch==2.6.0 torchvision --index-url {torch_index_url}",
                     )
 
     requirements_file = os.environ.get('REQS_FILE', "requirements_versions.txt")
     requirements_file_for_npu = os.environ.get('REQS_FILE_FOR_NPU', "requirements_npu.txt")
 
-    xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.27')
+    xformers_package = os.environ.get('XFORMERS_PACKAGE', '--index-url https://download.pytorch.org/whl/cu124 xformers')
     clip_package = os.environ.get('CLIP_PACKAGE', "https://github.com/openai/CLIP/archive/d50d76daa670286dd6cacf3bcd80b5e4823fc8e1.zip")
     openclip_package = os.environ.get('OPENCLIP_PACKAGE', "https://github.com/mlfoundations/open_clip/archive/bb6e834e9c70d9c27d0dc3ecedeebeaeb1ffad6b.zip")
+
+    if sys.version_info.major == 3 and sys.version_info.minor == 13: #for some reason python 3.13 needs this library
+        try:
+            if not is_installed("audioop-lts"):
+                run_pip("install audioop-lts", "audioop-lts")
+        except Exception as e:
+            print(f"Failed to install audioop-lts: {e}")
 
     assets_repo = os.environ.get('ASSETS_REPO', "https://github.com/AUTOMATIC1111/stable-diffusion-webui-assets.git")
     # stable_diffusion_repo = os.environ.get('STABLE_DIFFUSION_REPO', "https://github.com/Stability-AI/stablediffusion.git")
@@ -653,7 +714,7 @@ def configure_forge_reference_checkout(a1111_home: Path):
         ModelRef(arg_name="--vae-dir", relative_path="models/VAE"),
         ModelRef(arg_name="--hypernetwork-dir", relative_path="models/hypernetworks"),
         ModelRef(arg_name="--embeddings-dir", relative_path="embeddings"),
-        ModelRef(arg_name="--lora-dir", relative_path="models/lora"),
+        ModelRef(arg_name="--lora-dir", relative_path="models/Lora"),
         # Ref A1111 need to have sd-webui-controlnet installed.
         ModelRef(arg_name="--controlnet-dir", relative_path="models/ControlNet"),
         ModelRef(arg_name="--controlnet-preprocessor-models-dir", relative_path="extensions/sd-webui-controlnet/annotator/downloads"),

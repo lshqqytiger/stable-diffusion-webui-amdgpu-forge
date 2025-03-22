@@ -1,6 +1,10 @@
 import torch
 import tqdm
-import k_diffusion.sampling
+from modules.shared import opts
+if opts.sd_sampling == "A1111":
+    from k_diffusion import sampling
+elif opts.sd_sampling == "ldm patched (Comfy)":
+    from ldm_patched.k_diffusion import sampling as sampling
 
 
 @torch.no_grad()
@@ -12,7 +16,10 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
     extra_args = {} if extra_args is None else extra_args
     s_in = x.new_ones([x.shape[0]])
     step_id = 0
-    from k_diffusion.sampling import to_d, get_sigmas_karras
+    if opts.sd_sampling == "A1111":
+        from k_diffusion.sampling import to_d, get_sigmas_karras
+    elif opts.sd_sampling == "ldm patched (Comfy)":
+        from ldm_patched.k_diffusion.sampling import to_d, get_sigmas_karras
 
     def heun_step(x, old_sigma, new_sigma, second_order=True):
         nonlocal step_id
@@ -67,8 +74,41 @@ def restart_sampler(model, x, sigmas, extra_args=None, callback=None, disable=No
         if last_sigma is None:
             last_sigma = old_sigma
         elif last_sigma < old_sigma:
-            x = x + k_diffusion.sampling.torch.randn_like(x) * s_noise * (old_sigma ** 2 - last_sigma ** 2) ** 0.5
+            x = x + sampling.torch.randn_like(x) * s_noise * (old_sigma ** 2 - last_sigma ** 2) ** 0.5
         x = heun_step(x, old_sigma, new_sigma)
         last_sigma = new_sigma
 
+    return x
+
+@torch.no_grad()
+def sample_dpmpp_2m_cfgpp(model, x, sigmas, extra_args=None, callback=None, disable=None):
+    """DPM-Solver++(2M) CFG++. 
+    From https://github.com/crowsonkb/k-diffusion/blob/master/ldm_patched.k_diffusion/sampling.py
+    """
+    model.cond_scale_miltiplier = 1 / 12.5
+    model.need_last_noise_uncond = True
+
+    extra_args = {} if extra_args is None else extra_args
+    s_in = x.new_ones([x.shape[0]])
+    sigma_fn = lambda t: t.neg().exp()
+    t_fn = lambda sigma: sigma.log().neg()
+    old_denoised = None
+    old_noise_uncond = None
+
+    for i in tqdm.trange(len(sigmas) - 1, disable=disable):
+        denoised = model(x, sigmas[i] * s_in, **extra_args)
+        noise_uncond = model.last_noise_uncond
+        if callback is not None:
+            callback({'x': x, 'i': i, 'sigma': sigmas[i], 'sigma_hat': sigmas[i], 'denoised': denoised})
+        t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i + 1])
+        h = t_next - t
+        if old_denoised is None or old_noise_uncond is None or sigmas[i + 1] == 0:
+            x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised
+        else:
+            h_last = t - t_fn(sigmas[i - 1])
+            r = h_last / h
+            denoised_d = (1 + 1 / (2 * r)) * denoised - (1 / (2 * r)) * old_noise_uncond
+            x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_d
+        old_denoised = denoised
+        old_noise_uncond = noise_uncond 
     return x

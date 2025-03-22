@@ -60,3 +60,4 @@ class ExtraNetworkLora(extra_networks.ExtraNetwork):
             p.comment("Networks with errors: " + ", ".join(f"{k} ({v})" for k, v in self.errors.items()))
 
             self.errors.clear()
+            

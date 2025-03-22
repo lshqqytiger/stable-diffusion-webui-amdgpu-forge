@@ -50,8 +50,8 @@ class ZoeDepth(DepthModel):
             min_depth (float, optional): Lower bound for normed bin centers. Defaults to 1e-3.
             max_depth (float, optional): Upper bound for normed bin centers. Defaults to 10.
             n_attractors (List[int], optional): Number of bin attractors at decoder layers. Defaults to [16, 8, 4, 1].
-            attractor_alpha (int, optional): Proportional attractor strength. Refer to models.layers.attractor for more details. Defaults to 300.
-            attractor_gamma (int, optional): Exponential attractor strength. Refer to models.layers.attractor for more details. Defaults to 2.
+            attractor_alpha (int, optional): Proportional attractor strength. Refer to .layers.attractor for more details. Defaults to 300.
+            attractor_gamma (int, optional): Exponential attractor strength. Refer to .layers.attractor for more details. Defaults to 2.
             attractor_kind (str, optional): Attraction aggregation "sum" or "mean". Defaults to 'sum'.
             attractor_type (str, optional): Type of attractor to use; "inv" (Inverse attractor) or "exp" (Exponential attractor). Defaults to 'exp'.
             min_temp (int, optional): Lower bound for temperature of output probability distribution. Defaults to 5.

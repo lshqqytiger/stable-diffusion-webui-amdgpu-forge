@@ -70,11 +70,9 @@ def reload_gradio_theme(theme_name=None):
     shared.gradio_theme.sd_webui_modal_lightbox_toolbar_opacity = shared.opts.sd_webui_modal_lightbox_toolbar_opacity
     shared.gradio_theme.sd_webui_modal_lightbox_icon_opacity = shared.opts.sd_webui_modal_lightbox_icon_opacity
 
-
 def resolve_var(name: str, gradio_theme=None, history=None):
     """
     Attempt to resolve a theme variable name to its value
-
     Parameters:
         name (str): The name of the theme variable
             ie "background_fill_primary", "background_fill_primary_dark"
@@ -85,7 +83,6 @@ def resolve_var(name: str, gradio_theme=None, history=None):
             for regular use leave blank
     Returns:
         str: The resolved value
-
     Error handling:
         return either #000000 or #ffffff depending on initial name ending with "_dark"
     """

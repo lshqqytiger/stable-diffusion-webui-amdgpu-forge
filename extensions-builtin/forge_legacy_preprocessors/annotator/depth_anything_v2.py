@@ -1,3 +1,21 @@
+import sys
+import subprocess
+
+try:
+    from depth_anything_v2.dpt import DepthAnythingV2
+    from depth_anything_v2.util.transform import Resize, NormalizeImage, PrepareForNet
+except ImportError:
+    print("Installing depth_anything_v2...")
+    subprocess.check_call([
+        sys.executable, 
+        "-m", 
+        "pip", 
+        "install",
+        "https://github.com/MackinationsAi/UDAV2-ControlNet/releases/download/v1.0.0/depth_anything_v2-2024.7.1.0-py2.py3-none-any.whl"
+    ])
+    from depth_anything_v2.dpt import DepthAnythingV2
+    from depth_anything_v2.util.transform import Resize, NormalizeImage, PrepareForNet
+
 import os
 import torch
 import cv2
@@ -5,9 +23,6 @@ import numpy as np
 import torch.nn.functional as F
 from torchvision.transforms import Compose
 from safetensors.torch import load_file
-
-from depth_anything_v2.dpt import DepthAnythingV2
-from depth_anything_v2.util.transform import Resize, NormalizeImage, PrepareForNet
 from .util import load_model
 from .annotator_path import models_path
 

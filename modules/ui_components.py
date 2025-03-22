@@ -1,12 +1,7 @@
-from functools import wraps
-
 import gradio as gr
-from modules import gradio_extensions  # noqa: F401
 
 
 class FormComponent:
-    webui_do_not_create_gradio_pyi_thank_you = True
-
     def get_expected_parent(self):
         return gr.components.Form
 
@@ -14,13 +9,12 @@ class FormComponent:
 gr.Dropdown.get_expected_parent = FormComponent.get_expected_parent
 
 
-class ToolButton(gr.Button, FormComponent):
+class ToolButton(FormComponent, gr.Button):
     """Small button with single emoji as text, fits inside gradio forms"""
 
-    @wraps(gr.Button.__init__)
-    def __init__(self, value="", *args, elem_classes=None, **kwargs):
-        elem_classes = elem_classes or []
-        super().__init__(*args, elem_classes=["tool", *elem_classes], value=value, **kwargs)
+    def __init__(self, *args, **kwargs):
+        classes = kwargs.pop("elem_classes", [])
+        super().__init__(*args, elem_classes=["tool", *classes], **kwargs)
 
     def get_block_name(self):
         return "button"
@@ -28,9 +22,7 @@ class ToolButton(gr.Button, FormComponent):
 
 class ResizeHandleRow(gr.Row):
     """Same as gr.Row but fits inside gradio forms"""
-    webui_do_not_create_gradio_pyi_thank_you = True
 
-    @wraps(gr.Row.__init__)
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -40,92 +32,91 @@ class ResizeHandleRow(gr.Row):
         return "row"
 
 
-class FormRow(gr.Row, FormComponent):
+class FormRow(FormComponent, gr.Row):
     """Same as gr.Row but fits inside gradio forms"""
 
     def get_block_name(self):
         return "row"
 
 
-class FormColumn(gr.Column, FormComponent):
+class FormColumn(FormComponent, gr.Column):
     """Same as gr.Column but fits inside gradio forms"""
 
     def get_block_name(self):
         return "column"
 
 
-class FormGroup(gr.Group, FormComponent):
+class FormGroup(FormComponent, gr.Group):
     """Same as gr.Group but fits inside gradio forms"""
 
     def get_block_name(self):
         return "group"
 
 
-class FormHTML(gr.HTML, FormComponent):
+class FormHTML(FormComponent, gr.HTML):
     """Same as gr.HTML but fits inside gradio forms"""
 
     def get_block_name(self):
         return "html"
 
 
-class FormColorPicker(gr.ColorPicker, FormComponent):
+class FormColorPicker(FormComponent, gr.ColorPicker):
     """Same as gr.ColorPicker but fits inside gradio forms"""
 
     def get_block_name(self):
         return "colorpicker"
 
 
-class DropdownMulti(gr.Dropdown, FormComponent):
+class DropdownMulti(FormComponent, gr.Dropdown):
     """Same as gr.Dropdown but always multiselect"""
-
-    @wraps(gr.Dropdown.__init__)
     def __init__(self, **kwargs):
-        kwargs['multiselect'] = True
-        super().__init__(**kwargs)
+        super().__init__(multiselect=True, **kwargs)
 
     def get_block_name(self):
         return "dropdown"
 
 
-class DropdownEditable(gr.Dropdown, FormComponent):
+class DropdownEditable(FormComponent, gr.Dropdown):
     """Same as gr.Dropdown but allows editing value"""
-
-    @wraps(gr.Dropdown.__init__)
     def __init__(self, **kwargs):
-        kwargs['allow_custom_value'] = True
-        super().__init__(**kwargs)
+        super().__init__(allow_custom_value=True, **kwargs)
 
     def get_block_name(self):
         return "dropdown"
 
 
-class InputAccordionImpl(gr.Checkbox):
+class InputAccordion(gr.Checkbox):
     """A gr.Accordion that can be used as an input - returns True if open, False if closed.
 
     Actually just a hidden checkbox, but creates an accordion that follows and is followed by the state of the checkbox.
     """
 
-    webui_do_not_create_gradio_pyi_thank_you = True
+    accordion_id_set = set()
 
     global_index = 0
 
-    @wraps(gr.Checkbox.__init__)
-    def __init__(self, value=None, setup=False, **kwargs):
-        if not setup:
-            super().__init__(value=value, **kwargs)
-            return
-
+    def __init__(self, value, **kwargs):
         self.accordion_id = kwargs.get('elem_id')
         if self.accordion_id is None:
-            self.accordion_id = f"input-accordion-{InputAccordionImpl.global_index}"
-            InputAccordionImpl.global_index += 1
+            self.accordion_id = f"input-accordion-{InputAccordion.global_index}"
+            InputAccordion.global_index += 1
+
+        if not InputAccordion.accordion_id_set:
+            from modules import script_callbacks
+            script_callbacks.on_script_unloaded(InputAccordion.reset)
+        if self.accordion_id in InputAccordion.accordion_id_set:
+            count = 1
+            while (unique_id := f'{self.accordion_id}-{count}') in InputAccordion.accordion_id_set:
+                count += 1
+            self.accordion_id = unique_id
+        InputAccordion.accordion_id_set.add(self.accordion_id)
 
         kwargs_checkbox = {
             **kwargs,
             "elem_id": f"{self.accordion_id}-checkbox",
             "visible": False,
         }
-        super().__init__(value=value, **kwargs_checkbox)
+        super().__init__(value, **kwargs_checkbox)
 
         self.change(fn=None, _js='function(checked){ inputAccordionChecked("' + self.accordion_id + '", checked); }', inputs=[self])
 
@@ -136,7 +127,6 @@ class InputAccordionImpl(gr.Checkbox):
             "elem_classes": ['input-accordion'],
             "open": value,
         }
-
         self.accordion = gr.Accordion(**kwargs_accordion)
 
     def extra(self):
@@ -164,7 +154,8 @@ class InputAccordionImpl(gr.Checkbox):
 
     def get_block_name(self):
         return "checkbox"
-
-
-def InputAccordion(value=None, **kwargs):
-    return InputAccordionImpl(value=value, setup=True, **kwargs)
+    
+    @classmethod
+    def reset(cls):
+        cls.global_index = 0
+        cls.accordion_id_set.clear()
