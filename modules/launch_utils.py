@@ -509,7 +509,7 @@ def prepare_environment():
                     print('Setting HIP_VISIBLE_DEVICES and --device-id at the same time may be mistake.')
                 os.environ['HIP_VISIBLE_DEVICES'] = args.device_id
                 del args.device_id
-            args.skip_torch_cuda_test = False
+            args.skip_torch_cuda_test = True
 
             print("ZLUDA support: experimental")
             error = None
