@@ -5,7 +5,6 @@ import torch
 from modules import shared
 from modules.shared import cmd_opts
 from modules.dml import directml_init, directml_do_hijack
-from modules.zluda import initialize_zluda
 
 
 def initialize():
@@ -63,4 +62,5 @@ def initialize():
         from modules.onnx_impl import initialize_onnx
         initialize_onnx()
 
+    from modules.zluda import initialize_zluda
     initialize_zluda()
