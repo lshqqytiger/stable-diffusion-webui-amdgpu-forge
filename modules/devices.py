@@ -15,8 +15,9 @@ def has_zluda() -> bool:
     if not torch.cuda.is_available():
         return False
     try:
-        device = torch.device("cuda")
-        return torch.cuda.get_device_name(device).endswith("[ZLUDA]")
+        dev = torch.device("cuda")
+        cc = torch.cuda.get_device_capability(dev)
+        return cc == (8, 8)
     except Exception:
         return False
 
