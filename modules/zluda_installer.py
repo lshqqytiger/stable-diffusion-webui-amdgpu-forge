@@ -4,6 +4,7 @@ import site
 import ctypes
 import shutil
 import zipfile
+import platform
 import urllib.request
 from typing import Union
 from modules import rocm
@@ -27,6 +28,11 @@ hipBLASLt_enabled = False
 
 nightly = os.environ.get("ZLUDA_NIGHTLY", "0") == "1"
 
+if platform.system() == "Windows":
+    LibraryLoaderClass = ctypes.WinDLL
+else:
+    LibraryLoaderClass = ctypes.CDLL
+
 
 class ZLUDAResult(ctypes.Structure):
     _fields_ = [
@@ -36,14 +42,14 @@ class ZLUDAResult(ctypes.Structure):
 
 
 class ZLUDALibrary:
-    internal: ctypes.WinDLL
+    internal: LibraryLoaderClass
 
-    def __init__(self, internal: ctypes.WinDLL):
+    def __init__(self, internal: LibraryLoaderClass):
         self.internal = internal
 
 
 class Core(ZLUDALibrary):
-    def __init__(self, internal: ctypes.WinDLL):
+    def __init__(self, internal: LibraryLoaderClass):
         internal.zluda_get_hip_object.restype = ZLUDAResult
         internal.zluda_get_hip_object.argtypes = [ctypes.c_void_p, ctypes.c_int]
 
