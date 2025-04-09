@@ -1,7 +1,7 @@
 from functools import wraps
 import torch
 import torch._dynamo.device_interface
-from modules import rocm, zluda, shared
+from modules import shared, zluda # pylint: disable=unused-import
 
 
 MEM_BUS_WIDTH = {
@@ -13,9 +13,31 @@ MEM_BUS_WIDTH = {
     "AMD Radeon RX 7900 GRE": 256,
     "AMD Radeon RX 7800 XT": 256,
     "AMD Radeon RX 7700 XT": 192,
+    "AMD Radeon RX 7700": 192,
+    "AMD Radeon RX 7650 GRE": 128,
     "AMD Radeon RX 7600 XT": 128,
     "AMD Radeon RX 7600": 128,
+    "AMD Radeon RX 7500 XT": 96,
+    "AMD Radeon RX 6950 XT": 256,
+    "AMD Radeon RX 6900 XT": 256,
+    "AMD Radeon RX 6800 XT": 256,
+    "AMD Radeon RX 6800": 256,
+    "AMD Radeon RX 6750 XT": 192,
+    "AMD Radeon RX 6700 XT": 192,
+    "AMD Radeon RX 6700": 160,
+    "AMD Radeon RX 6650 XT": 128,
+    "AMD Radeon RX 6600 XT": 128,
+    "AMD Radeon RX 6600": 128,
+    "AMD Radeon RX 6500 XT": 64,
+    "AMD Radeon RX 6400": 64,
 }
+
+
+_topk = torch.topk
+def topk(input: torch.Tensor, *args, **kwargs): # pylint: disable=redefined-builtin
+    device = input.device
+    values, indices = _topk(input.cpu(), *args, **kwargs)
+    return torch.return_types.topk((values.to(device), indices.to(device),))
 
 
 class DeviceProperties:
@@ -42,8 +64,7 @@ def torch__C__cuda_getCurrentRawStream(device):
 
 
 def do_hijack():
-    torch.version.hip = rocm.version
-
+    torch.topk = topk
     if zluda.default_agent is not None:
         DeviceProperties.PROPERTIES_OVERRIDE["gcnArchName"] = zluda.default_agent.name
     torch.cuda._get_device_properties = torch_cuda__get_device_properties # pylint: disable=protected-access

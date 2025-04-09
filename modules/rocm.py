@@ -172,12 +172,12 @@ else:
         return f'{arr[0]}.{arr[1]}' if len(arr) >= 2 else None
 
     def get_agents() -> List[Agent]:
-        if is_wsl: # WSL does not have 'rocm_agent_enumerator'
-            agents = spawn("rocminfo").split("\n")
-            agents = [x.strip().split(" ")[-1] for x in agents if x.startswith('  Name:') and "CPU" not in x]
-        else:
+        try:
             agents = spawn("rocm_agent_enumerator").split("\n")
             agents = [x for x in agents if x and x != 'gfx000']
+        except Exception: # old version of ROCm WSL doesn't have rocm_agent_enumerator
+            agents = spawn("rocminfo").split("\n")
+            agents = [x.strip().split(" ")[-1] for x in agents if x.startswith('  Name:') and "CPU" not in x]
         return [Agent(x) for x in agents]
 
     def load_hsa_runtime() -> None:
@@ -204,7 +204,9 @@ else:
     def get_flash_attention_command(agent: Agent):
         default = "git+https://github.com/ROCm/flash-attention"
         if agent.gfx_version >= 0x1100 and os.environ.get("FLASH_ATTENTION_USE_TRITON_ROCM", "false").lower() != "true":
-            default = "git+https://github.com/ROCm/flash-attention@howiejay/navi_support"
+            # use the navi_rotary_fix fork because the original doesn't support rotary_emb for transformers
+            # original: "git+https://github.com/ROCm/flash-attention@howiejay/navi_support"
+            default = "https://github.com/Disty0/flash-attention@navi_rotary_fix"
         return os.environ.get("FLASH_ATTENTION_PACKAGE", default)
 
     is_wsl: bool = os.environ.get('WSL_DISTRO_NAME', 'unknown' if spawn('wslpath -w /') else None) is not None
