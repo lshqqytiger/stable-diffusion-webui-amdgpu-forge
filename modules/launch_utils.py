@@ -473,6 +473,9 @@ def prepare_environment():
     print(f"Version: {tag}")
     print(f"Commit hash: {commit}")
 
+    if args.skip_torch_cuda_test:
+        print("WARNING: you should not skip torch test unless you want CPU to work.")
+
     if backend in ("rocm", "zluda",):
         device = None
         try:
