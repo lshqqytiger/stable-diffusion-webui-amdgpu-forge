@@ -4,6 +4,7 @@ import site
 import ctypes
 import shutil
 import zipfile
+import platform
 import urllib.request
 from typing import Union
 from modules import rocm
@@ -34,14 +35,14 @@ class ZLUDAResult(ctypes.Structure):
 
 
 class ZLUDALibrary:
-    internal: ctypes.WinDLL
+    internal: ctypes.CDLL
 
-    def __init__(self, internal: ctypes.WinDLL):
+    def __init__(self, internal: ctypes.CDLL):
         self.internal = internal
 
 
 class Core(ZLUDALibrary):
-    def __init__(self, internal: ctypes.WinDLL):
+    def __init__(self, internal: ctypes.CDLL):
         internal.zluda_get_hip_object.restype = ZLUDAResult
         internal.zluda_get_hip_object.argtypes = [ctypes.c_void_p, ctypes.c_int]
 
