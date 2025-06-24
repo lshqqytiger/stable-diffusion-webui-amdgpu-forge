@@ -367,19 +367,19 @@ def prepare_environment():
     system = platform.system()
     nvidia_driver_found = False
     backend = "cuda"
-    torch_command = "pip install torch==2.3.1 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
+    torch_command = "pip install torch==2.7.0 torchvision --extra-index-url https://download.pytorch.org/whl/cu121"
 
     if args.use_cpu_torch:
         backend = "cpu"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.3.1 torchvision",
+            "pip install torch==2.7.0 torchvision",
         )
     elif args.directml:
         backend = "directml"
         torch_command = os.environ.get(
             "TORCH_COMMAND",
-            "pip install torch==2.3.1 torchvision torch-directml",
+            "pip install torch torchvision torch-directml",
         )
         args.skip_python_version_check = True
     elif args.use_zluda:
@@ -406,6 +406,19 @@ def prepare_environment():
             # See https://intel.github.io/intel-extension-for-pytorch/index.html#installation for details.
             torch_index_url = os.environ.get('TORCH_INDEX_URL', "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/")
             torch_command = os.environ.get('TORCH_COMMAND', f"pip install torch==2.0.0a0 intel-extension-for-pytorch==2.0.110+gitba7f6c1 --extra-index-url {torch_index_url}")
+    elif rocm.is_installed:
+        if system == "Windows": # ZLUDA
+            args.use_zluda = True
+            backend = "zluda"
+        else:
+            backend = "rocm"
+            torch_index_url = os.environ.get(
+                "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.3"
+            )
+            torch_command = os.environ.get(
+                "TORCH_COMMAND",
+                f"pip install torch==2.7.0 torchvision --index-url {torch_index_url}",
+            )
     else:
         nvidia_driver_found = shutil.which("nvidia-smi") is not None
         if nvidia_driver_found:
@@ -416,21 +429,8 @@ def prepare_environment():
             )
             torch_command = os.environ.get(
                 "TORCH_COMMAND",
-                f"pip install torch==2.3.1 torchvision --extra-index-url {torch_index_url}",
+                f"pip install torch==2.7.0 torchvision --extra-index-url {torch_index_url}",
             )
-        else:
-            if rocm.is_installed:
-                if system == "Windows": # ZLUDA
-                    backend = "zluda"
-                else:
-                    backend = "rocm"
-                    torch_index_url = os.environ.get(
-                        "TORCH_INDEX_URL", "https://download.pytorch.org/whl/rocm6.0"
-                    )
-                    torch_command = os.environ.get(
-                        "TORCH_COMMAND",
-                        f"pip install torch==2.3.1 torchvision --index-url {torch_index_url}",
-                    )
 
     requirements_file = os.environ.get('REQS_FILE', "requirements_versions.txt")
     requirements_file_for_npu = os.environ.get('REQS_FILE_FOR_NPU', "requirements_npu.txt")
@@ -527,11 +527,8 @@ def prepare_environment():
                 print(f'Failed to install ZLUDA: {e}')
             if error is None:
                 try:
-                    if device is not None and zluda_installer.get_blaslt_enabled():
-                        print(f'ROCm hipBLASLt: arch={device.name} available={device.blaslt_supported}')
-                        zluda_installer.set_blaslt_enabled(device.blaslt_supported)
                     zluda_installer.load()
-                    torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
+                    torch_command = os.environ.get('TORCH_COMMAND', 'pip install torch==2.7.0 torchvision --index-url https://download.pytorch.org/whl/cu118')
                 except Exception as e:
                     error = e
                     print(f'Failed to load ZLUDA: {e}')
@@ -626,6 +623,9 @@ def prepare_environment():
     if "--exit" in sys.argv:
         print("Exiting because of --exit argument")
         exit(0)
+
+    from modules import devices
+    devices.backend = backend
 
 def configure_for_tests():
     if "--api" not in sys.argv:

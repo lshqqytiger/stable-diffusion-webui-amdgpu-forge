@@ -70,8 +70,8 @@ def set_default_agent(agent: rocm.Agent):
     default_agent = agent
 
 
-def is_reinstall_needed() -> bool: # ZLUDA<3.8.7
-    return not os.path.exists(os.path.join(path, 'cufftw.dll'))
+def is_reinstall_needed() -> bool: # ZLUDA<3.9.4
+    return os.path.exists(os.path.join(path, 'cudart.dll'))
 
 
 def install():
@@ -79,9 +79,9 @@ def install():
         return
 
     platform = "windows"
-    commit = os.environ.get("ZLUDA_HASH", "dba64c0966df2c71e82255e942c96e2e1cea3a2d")
+    commit = os.environ.get("ZLUDA_HASH", "5e717459179dc272b7d7d23391f0fad66c7459cf")
     if os.environ.get("ZLUDA_NIGHTLY", "0") == "1":
-        print("Warning: Environment variable 'ZLUDA_NIGHTLY' will be removed. Please use command-line argument '--use-nightly' instead.")
+        print("Environment variable 'ZLUDA_NIGHTLY' will be removed. Please use command-line argument '--use-nightly' instead.")
         args.use_nightly = True
     if args.use_nightly:
         platform = "nightly-" + platform
@@ -124,8 +124,13 @@ def load():
     core = Core(ctypes.windll.LoadLibrary(os.path.join(path, 'nvcuda.dll')))
     ml = ZLUDALibrary(ctypes.windll.LoadLibrary(os.path.join(path, 'nvml.dll')))
     is_nightly = core.get_nightly_flag() == 1
-    hipBLASLt_enabled = is_nightly and os.path.exists(rocm.blaslt_tensile_libpath) and os.path.exists(os.path.join(rocm.path, "bin", "hipblaslt.dll"))
+    hipBLASLt_enabled = is_nightly and os.path.exists(rocm.blaslt_tensile_libpath) and os.path.exists(os.path.join(rocm.path, "bin", "hipblaslt.dll")) and default_agent is not None
     MIOpen_enabled = is_nightly and os.path.exists(os.path.join(rocm.path, "bin", "MIOpen.dll"))
+
+    if hipBLASLt_enabled:
+        if not default_agent.blaslt_supported:
+            hipBLASLt_enabled = False
+        print(f'ROCm hipBLASLt: arch={default_agent.name} available={hipBLASLt_enabled}')
 
     for k, v in DLL_MAPPING.items():
         if not os.path.exists(os.path.join(path, v)):

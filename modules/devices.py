@@ -58,6 +58,7 @@ def enable_tf32():
     return
 
 
+backend = "cpu"
 cpu: torch.device = torch.device("cpu")
 fp8: bool = False
 device: torch.device = memory_management.get_torch_device()

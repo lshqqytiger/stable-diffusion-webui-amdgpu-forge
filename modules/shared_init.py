@@ -1,4 +1,5 @@
 import os
+import sys
 
 import torch
 
@@ -62,5 +63,10 @@ def initialize():
         from modules.onnx_impl import initialize_onnx
         initialize_onnx()
 
-    from modules.zluda import initialize_zluda
-    initialize_zluda()
+    if sys.platform == "win32" and (devices.backend == "zluda" or devices.backend == "rocm"):
+        from modules.rocm_triton_windows import apply_triton_patches
+        apply_triton_patches()
+
+        if devices.backend == "zluda":
+            from modules.zluda import initialize_zluda
+            initialize_zluda()
