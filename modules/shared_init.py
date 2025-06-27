@@ -3,7 +3,7 @@ import sys
 
 import torch
 
-from modules import shared
+from modules import shared, rocm
 from modules.shared import cmd_opts
 from modules.dml import directml_init, directml_do_hijack
 
@@ -63,10 +63,10 @@ def initialize():
         from modules.onnx_impl import initialize_onnx
         initialize_onnx()
 
-    if sys.platform == "win32" and (devices.backend == "zluda" or devices.backend == "rocm"):
+    if sys.platform == "win32" and rocm.is_installed:
         from modules.rocm_triton_windows import apply_triton_patches
         apply_triton_patches()
 
-        if devices.backend == "zluda":
+        if rocm.version_torch is None:
             from modules.zluda import initialize_zluda
             initialize_zluda()

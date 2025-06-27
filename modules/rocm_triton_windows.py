@@ -1,7 +1,7 @@
 import sys
 from functools import wraps
 import torch
-from modules import shared, devices
+from modules import shared, devices, rocm
 
 
 if sys.platform == "win32":
@@ -58,7 +58,7 @@ if sys.platform == "win32":
         return zluda.core.to_hip_stream(_cuda_getCurrentRawStream(device))
 
     def get_default_agent_name():
-        if devices.backend == "rocm":
+        if rocm.version_torch is not None:
             device = devices.get_optimal_device()
             return getattr(torch.cuda.get_device_properties(device), "gcnArchName", None)
         else:
@@ -72,7 +72,7 @@ if sys.platform == "win32":
         if arch_name is not None:
             DeviceProperties.PROPERTIES_OVERRIDE["gcnArchName"] = arch_name
         torch.cuda._get_device_properties = torch_cuda__get_device_properties # pylint: disable=protected-access
-        if devices.backend == "zluda":
+        if rocm.version_torch is None:
             torch._C._cuda_getCurrentRawStream = torch__C__cuda_getCurrentRawStream # pylint: disable=protected-access
             torch._dynamo.device_interface.CudaInterface.get_raw_stream = staticmethod(torch__C__cuda_getCurrentRawStream) # pylint: disable=protected-access
 
