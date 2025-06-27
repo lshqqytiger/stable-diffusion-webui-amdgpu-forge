@@ -63,7 +63,7 @@ def initialize():
         from modules.onnx_impl import initialize_onnx
         initialize_onnx()
 
-    if sys.platform == "win32" and rocm.is_installed:
+    if sys.platform == "win32" and rocm.is_installed and shared.device.type == "cuda":
         from modules.rocm_triton_windows import apply_triton_patches
         apply_triton_patches()
 
