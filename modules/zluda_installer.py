@@ -4,7 +4,6 @@ import site
 import ctypes
 import shutil
 import zipfile
-import platform
 import urllib.request
 from typing import Union
 from modules import rocm
@@ -18,7 +17,7 @@ DLL_MAPPING = {
     'cufftw.dll': 'cufftw64_10.dll',
     'nvrtc.dll': 'nvrtc64_112_0.dll',
 }
-HIPSDK_TARGETS = ['rocblas.dll', 'rocsolver.dll', 'hipfft.dll',]
+HIPSDK_TARGETS = ['rocblas.dll', 'rocsolver.dll', 'rocsparse.dll', 'hipfft.dll',]
 
 MIOpen_enabled = False
 

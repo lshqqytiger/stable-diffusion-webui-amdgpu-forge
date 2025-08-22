@@ -1,7 +1,9 @@
 import sys
-from functools import wraps
 import torch
-from modules import shared, devices, rocm
+from modules import devices
+
+
+is_available = False
 
 
 if sys.platform == "win32":
@@ -58,21 +60,21 @@ if sys.platform == "win32":
         return zluda.core.to_hip_stream(_cuda_getCurrentRawStream(device))
 
     def get_default_agent_name():
-        if rocm.version_torch is not None:
-            device = devices.get_optimal_device()
-            return getattr(torch.cuda.get_device_properties(device), "gcnArchName", None)
-        else:
+        if devices.has_zluda():
             from modules import zluda
             if zluda.default_agent is None:
                 return None
             return zluda.default_agent.name
+        else:
+            device = devices.get_optimal_device()
+            return getattr(torch.cuda.get_device_properties(device), "gcnArchName", None)
 
     def apply_triton_patches():
         arch_name = get_default_agent_name()
         if arch_name is not None:
             DeviceProperties.PROPERTIES_OVERRIDE["gcnArchName"] = arch_name
         torch.cuda._get_device_properties = torch_cuda__get_device_properties # pylint: disable=protected-access
-        if rocm.version_torch is None:
+        if devices.has_zluda():
             torch._C._cuda_getCurrentRawStream = torch__C__cuda_getCurrentRawStream # pylint: disable=protected-access
             torch._dynamo.device_interface.CudaInterface.get_raw_stream = staticmethod(torch__C__cuda_getCurrentRawStream) # pylint: disable=protected-access
 
@@ -94,34 +96,7 @@ if sys.platform == "win32":
                 return props
             triton.runtime.driver.active.utils.get_device_properties = triton_runtime_driver_active_utils_get_device_properties
 
-            if 'Flash attention' in shared.opts.sdp_options:
-                from modules.flash_attn_triton_amd import interface_fa
-                sdpa_pre_flash_atten = torch.nn.functional.scaled_dot_product_attention
-                @wraps(sdpa_pre_flash_atten)
-                def sdpa_flash_atten(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None):
-                    if query.shape[-1] <= 128 and attn_mask is None and query.dtype != torch.float32:
-                        if scale is None:
-                            scale = query.shape[-1] ** (-0.5)
-                        head_size_og = query.size(3)
-                        if head_size_og % 8 != 0:
-                            query = torch.nn.functional.pad(query, [0, 8 - head_size_og % 8])
-                            key = torch.nn.functional.pad(key, [0, 8 - head_size_og % 8])
-                            value = torch.nn.functional.pad(value, [0, 8 - head_size_og % 8])
-                        query = query.transpose(1, 2)
-                        out_padded = torch.zeros_like(query)
-                        interface_fa.fwd(
-                            query,
-                            key.transpose(1, 2),
-                            value.transpose(1, 2),
-                            out_padded,
-                            dropout_p,
-                            scale,
-                            is_causal,
-                        )
-                        return out_padded[..., :head_size_og].transpose(1, 2)
-                    else:
-                        return sdpa_pre_flash_atten(query=query, key=key, value=value, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal, scale=scale)
-                torch.nn.functional.scaled_dot_product_attention = sdpa_flash_atten
-                print('Torch attention: type="triton flash attention"')
+            global is_available
+            is_available = True
         except Exception:
             pass
