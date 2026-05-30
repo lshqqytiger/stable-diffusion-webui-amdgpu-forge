@@ -93,7 +93,11 @@ class CheckpointInfo:
         self.name = name
         self.name_for_extra = os.path.splitext(os.path.basename(filename))[0]
         self.model_name = os.path.splitext(name.replace("/", "_").replace("\\", "_"))[0]
-        self.hash = model_hash(filename) if os.path.isfile(filename) else None
+        try:
+            self.hash = model_hash(filename) if os.path.isfile(filename) else None
+        except PermissionError:
+            print(f"Warning: cannot read {filename} (file may be locked/downloading), skipping hash", file=sys.stderr)
+            self.hash = None
 
         self.sha256 = hashes.sha256_from_cache(self.filename, f"checkpoint/{name}") if os.path.isfile(filename) else None
         self.shorthash = self.sha256[0:10] if self.sha256 else None
@@ -179,8 +183,11 @@ def list_models():
         print(f"Checkpoint in --ckpt argument not found (Possible it was moved to {model_path}: {cmd_ckpt}", file=sys.stderr)
 
     for filename in model_list:
-        checkpoint_info = CheckpointInfo(filename)
-        checkpoint_info.register()
+        try:
+            checkpoint_info = CheckpointInfo(filename)
+            checkpoint_info.register()
+        except PermissionError:
+            print(f"Warning: skipping locked model file: {filename}", file=sys.stderr)
 
 
 re_strip_checksum = re.compile(r"\s*\[[^]]+]\s*$")
